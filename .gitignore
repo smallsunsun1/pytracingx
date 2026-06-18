@@ -1,5 +1,6 @@
 .vscode
 .cargo
+.qoder
 dist
 target
 run.sh

@@ -1,0 +1,33 @@
+language: zh-CN
+early_access: false
+reviews:
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+      - develop
+  path_filters:
+    - "!target/**"
+    - "!dist/**"
+    - "!**/*.lock"
+  path_instructions:
+    - path: "rust/**/*.rs"
+      instructions: |
+        Focus on memory safety, GIL handling (PyO3 best practices), unsafe blocks,
+        error propagation via PtxError, and async runtime correctness with tokio.
+    - path: "python/**/*.py"
+      instructions: |
+        Check for proper type hints, asyncio context propagation, and that public
+        API stays consistent with the Rust extension's signatures.
+    - path: "tests/**/*.py"
+      instructions: |
+        Verify fixtures are isolated, async tests are marked correctly, and that
+        runtime init/shutdown lifecycle is properly cleaned up.
+chat:
+  auto_reply: true
