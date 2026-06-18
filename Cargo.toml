@@ -1,6 +1,6 @@
 [package]
 name = "pytracingx"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Rust + OpenTelemetry powered Python bindings for traces, metrics, and logs (SLS-first)"
 license = "MIT"
@@ -13,7 +13,11 @@ crate-type = ["cdylib"]
 path = "rust/src/lib.rs"
 
 [dependencies]
-pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39", "anyhow"] }
+pyo3 = { version = "0.29", features = [
+    "extension-module",
+    "abi3-py39",
+    "anyhow",
+] }
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 anyhow = { version = "1", features = ["backtrace"] }
 opentelemetry = { version = "0.32", features = ["trace", "metrics", "logs"] }

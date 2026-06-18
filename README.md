@@ -24,6 +24,48 @@ support for **Aliyun SLS** and **ARMS** as OTLP backends.
 - **容器/Serverless**:单文件部署,冷启动快,无 grpcio 编译依赖
 - **阿里云全栈**:traces → ARMS,metrics → ARMS,logs → SLS 任意 logstore,一个 `Config` 搞定
 
+## AI 时代的可观测性 — 为大模型推理而生
+
+在 LLM / 大模型推理场景下,**任何 CPU 侧的可观测性开销都会直接影响 GPU 利用率**。
+当 Python 主线程被 trace 序列化、log 格式化、metric 聚合占据,GPU kernel 的提交、
+KV-cache 调度、batch 编排都会被推迟,表现为:
+
+- **TTFT (Time To First Token) 抖动**:span export 阻塞 GIL,推理请求入队延迟
+- **GPU bubble**:CPU 来不及喂数据,GPU SM 出现空转间隙,吞吐下降
+- **batch 调度劣化**:vLLM / SGLang 等推理引擎的 scheduler 依赖低延迟事件循环,
+  Python SDK 的 daemon thread 与 uvloop 抢占会破坏 continuous batching
+
+pytracingx 的 Rust-native 设计天然适配这些场景:
+
+| 痛点 | 传统 Python SDK | pytracingx |
+|---|---|---|
+| **GPU 调度受 GIL 阻塞** | `start_span` 持 GIL 10-50μs,推理 step 间被切走 | FFI 入参拷贝后立即释放 GIL,μs 级返回 |
+| **token-level 追踪开销** | 每个 token 一个 span 时,Python GC 压力陡增 | span 在 Rust 堆上分配,对 Python GC 零影响 |
+| **prompt/completion 日志体量** | 大 payload 在 Python 侧序列化拖慢主循环 | protobuf + 异步 batch 全在 Rust tokio runtime |
+| **多卡/多进程部署** | 每个 worker 拉起完整 Python OTel 栈,内存翻倍 | 单 `.so`,共享 abi3 wheel,显存外的常驻开销 < 5MB |
+
+### 推理服务集成模式
+
+```python
+# 在 vLLM / SGLang / TGI 等推理引擎入口处
+with ptx.start_span("llm.inference", attributes={
+    "llm.model": "qwen2.5-72b",
+    "llm.prompt_tokens": prompt_len,
+    "gen.batch_size": batch_size,
+}) as span:
+    output = engine.generate(prompts)        # GPU 工作不受打扰
+    span.set_attribute("llm.completion_tokens", output.usage.completion_tokens)
+    span.set_attribute("llm.ttft_ms", output.metrics.first_token_ms)
+```
+
+观测维度建议:
+
+- **Trace**:request → tokenize → schedule → prefill → decode → detokenize 全链路
+- **Metrics**:TTFT / TPOT (Time Per Output Token) / GPU SM 利用率 / KV-cache 命中率
+- **Logs**:prompt / completion 采样落盘到 SLS,便于离线 RAG / 微调数据回流
+
+**核心理念**:让可观测性成为 AI 基础设施的一部分,而不是性能税。
+
 ## Architecture
 
 ```
