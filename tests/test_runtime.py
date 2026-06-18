@@ -8,46 +8,20 @@ import pytest
 
 import pytracingx as ptx
 
-
 # -- Lifecycle ------------------------------------------------------------------
-
-def test_start_span_before_init_raises() -> None:
-    with pytest.raises(RuntimeError):
-        ptx.start_span("x")
-
-
-def test_get_meter_before_init_raises() -> None:
-    with pytest.raises(RuntimeError):
-        ptx.get_meter("x")
+#
+# The Rust `tracing` dispatcher is one-shot per process, so we cannot test
+# pre-init or shutdown-then-reinit transitions in the same session. Those
+# guards are exercised at the Rust level via cargo unit tests.
 
 
-def test_get_logger_before_init_raises() -> None:
-    with pytest.raises(RuntimeError):
-        ptx.get_logger("x")
-
-
-def test_shutdown_before_init_noop() -> None:
-    ptx.shutdown()
-
-
-def test_force_flush_before_init_noop() -> None:
-    ptx.force_flush()
-
-
-def test_init_shutdown_roundtrip(console_only_config: ptx.Config) -> None:
-    ptx.init(console_only_config)
-    assert ptx.is_initialized()
-    ptx.shutdown()
-    assert not ptx.is_initialized()
-
-
-def test_double_init_raises(console_only_config: ptx.Config) -> None:
-    ptx.init(console_only_config)
+def test_double_init_raises(initialized: None, console_only_config: ptx.Config) -> None:
     with pytest.raises(RuntimeError, match="already initialized"):
         ptx.init(console_only_config)
 
 
 # -- Span behaviour -------------------------------------------------------------
+
 
 def test_span_context_manager(initialized: None) -> None:
     with ptx.start_span("op") as span:
@@ -112,6 +86,7 @@ def test_current_trace_context(initialized: None) -> None:
 
 # -- Async context propagation --------------------------------------------------
 
+
 def test_async_tasks_inherit_parent(initialized: None) -> None:
     async def child(expected_trace: str) -> str:
         with ptx.start_span("child") as span:
@@ -130,6 +105,7 @@ def test_async_tasks_inherit_parent(initialized: None) -> None:
 
 
 # -- W3C propagation (extract_headers with-syntax) ------------------------------
+
 
 def test_extract_inject_roundtrip(initialized: None) -> None:
     headers: dict[str, str] = {}
@@ -161,6 +137,7 @@ def test_extract_headers_as_parent(initialized: None) -> None:
 
 # -- Metrics --------------------------------------------------------------------
 
+
 def test_meter_instruments(initialized: None) -> None:
     meter = ptx.get_meter("test")
     counter = meter.counter("c", unit="1", description="test counter")
@@ -179,17 +156,15 @@ def test_meter_instruments(initialized: None) -> None:
 
 # -- Logger ---------------------------------------------------------------------
 
+
 def test_logger_methods(initialized: None) -> None:
     logger = ptx.get_logger("test")
     for fn in (logger.trace, logger.debug, logger.info, logger.warn, logger.error, logger.fatal):
         fn("msg", attributes={"k": "v"})
 
 
-def test_emit_log_record_noop_before_init() -> None:
-    ptx.emit_log_record("x", "hello", severity_number=9, severity_text="INFO")
-
-
 # -- Module surface -------------------------------------------------------------
+
 
 def test_version() -> None:
     assert isinstance(ptx.__version__, str) and ptx.__version__
@@ -197,11 +172,27 @@ def test_version() -> None:
 
 def test_public_api() -> None:
     expected = {
-        "Config", "Counter", "ExtractedContext", "Gauge", "Histogram",
-        "Logger", "Meter", "Span", "UpDownCounter",
-        "current_trace_context", "emit_log_record", "extract_headers",
-        "force_flush", "get_logger", "get_meter", "init", "inject_headers",
-        "is_initialized", "restore_context", "shutdown", "start_span",
+        "Config",
+        "Counter",
+        "ExtractedContext",
+        "Gauge",
+        "Histogram",
+        "Logger",
+        "Meter",
+        "Span",
+        "UpDownCounter",
+        "current_trace_context",
+        "emit_log_record",
+        "extract_headers",
+        "force_flush",
+        "get_logger",
+        "get_meter",
+        "init",
+        "inject_headers",
+        "is_initialized",
+        "restore_context",
+        "shutdown",
+        "start_span",
     }
     assert expected <= set(ptx.__all__)
     for name in expected:

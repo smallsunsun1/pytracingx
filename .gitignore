@@ -1,6 +1,9 @@
 .vscode
 .cargo
 .qoder
+.venv
+*.pyc
+__pycache__
 dist
 target
 run.sh

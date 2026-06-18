@@ -6,7 +6,6 @@ import logging
 
 import pytest
 
-import pytracingx as ptx
 from pytracingx.logging import SLSLoggingHandler, _severity_for, install
 
 
@@ -23,12 +22,6 @@ from pytracingx.logging import SLSLoggingHandler, _severity_for, install
 )
 def test_severity_mapping(level: int, expected: tuple[int, str]) -> None:
     assert _severity_for(level) == expected
-
-
-def test_handler_noop_before_init() -> None:
-    handler = SLSLoggingHandler()
-    record = logging.LogRecord("x", logging.INFO, __file__, 1, "hello", (), None)
-    handler.emit(record)  # must not raise
 
 
 def test_handler_emits_after_init(initialized: None) -> None:

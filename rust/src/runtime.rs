@@ -5,23 +5,22 @@ use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_sdk::logs::{BatchLogProcessor, SdkLoggerProvider};
 use opentelemetry_sdk::metrics::{
-    periodic_reader_with_async_runtime::PeriodicReader, SdkMeterProvider,
+    SdkMeterProvider, periodic_reader_with_async_runtime::PeriodicReader,
 };
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::runtime::Tokio;
 use opentelemetry_sdk::trace::{
-    BatchConfigBuilder,
+    BatchConfigBuilder, Sampler as SdkSampler, SdkTracerProvider,
     span_processor_with_async_runtime::BatchSpanProcessor,
-    Sampler as SdkSampler, SdkTracerProvider,
 };
 use parking_lot::Mutex;
+use tracing_subscriber::Registry;
 use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::Registry;
 
 use crate::config::{ResolvedConfig, Sampler};
-use crate::error::{anyhow, Result};
+use crate::error::{Result, anyhow};
 use crate::exporters::{build_log_exporter, build_metric_exporter, build_span_exporter};
 use crate::sls::build_resource;
 use crate::sls_log::{self, SlsLogHandle};
@@ -29,8 +28,7 @@ use crate::sls_log::{self, SlsLogHandle};
 static STATE: once_cell::sync::OnceCell<Mutex<Option<RuntimeState>>> =
     once_cell::sync::OnceCell::new();
 
-static GLOBAL_DISPATCH_INSTALLED: once_cell::sync::OnceCell<()> =
-    once_cell::sync::OnceCell::new();
+static GLOBAL_DISPATCH_INSTALLED: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
 
 pub struct RuntimeState {
     pub tracer_provider: Option<SdkTracerProvider>,
@@ -50,7 +48,9 @@ pub fn is_initialized() -> bool {
 pub fn install(config: ResolvedConfig) -> Result<()> {
     let mut guard = cell().lock();
     if guard.is_some() {
-        return Err(anyhow!("pytracingx is already initialized; call pytracingx.shutdown() before re-initializing"));
+        return Err(anyhow!(
+            "pytracingx is already initialized; call pytracingx.shutdown() before re-initializing"
+        ));
     }
 
     let resource = build_resource(&config);
@@ -148,9 +148,7 @@ fn install_dispatcher(
     use tracing_subscriber::Layer;
 
     if GLOBAL_DISPATCH_INSTALLED.get().is_some() {
-        tracing::warn!(
-            "pytracingx: tracing dispatcher already installed; the first init() wins."
-        );
+        tracing::warn!("pytracingx: tracing dispatcher already installed; the first init() wins.");
         return Ok(None);
     }
 
@@ -158,7 +156,11 @@ fn install_dispatcher(
 
     if config.console_output {
         let filter = build_env_filter(config)?;
-        layers.push(build_fmt_layer(&config.console_format).with_filter(filter).boxed());
+        layers.push(
+            build_fmt_layer(&config.console_format)
+                .with_filter(filter)
+                .boxed(),
+        );
     }
     if let Some(tp) = tracer_provider {
         let tracer = tp.tracer("pytracingx");
@@ -198,12 +200,15 @@ fn build_env_filter(config: &ResolvedConfig) -> Result<EnvFilter> {
         .map_err(|e| anyhow!(format!("EnvFilter build failed: {e}")))
 }
 
-fn build_fmt_layer(
-    format: &str,
-) -> Box<dyn tracing_subscriber::Layer<Registry> + Send + Sync> {
+fn build_fmt_layer(format: &str) -> Box<dyn tracing_subscriber::Layer<Registry> + Send + Sync> {
     use tracing_subscriber::fmt;
     match format {
-        "json" => Box::new(fmt::layer().json().with_target(true).with_writer(std::io::stderr)),
+        "json" => Box::new(
+            fmt::layer()
+                .json()
+                .with_target(true)
+                .with_writer(std::io::stderr),
+        ),
         "pretty" => Box::new(fmt::layer().pretty().with_writer(std::io::stderr)),
         _ => Box::new(fmt::layer().compact().with_writer(std::io::stderr)),
     }
