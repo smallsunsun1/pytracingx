@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::error::{PtxError, PtxResult};
+use crate::error::{bail, Result};
 
 const DEFAULT_BATCH_QUEUE: usize = 2_048;
 const DEFAULT_BATCH_EXPORT: usize = 512;
@@ -20,13 +20,13 @@ pub enum Protocol {
 }
 
 impl Protocol {
-    pub fn parse(value: &str) -> PtxResult<Self> {
+    pub fn parse(value: &str) -> Result<Self> {
         match value {
             "grpc" => Ok(Protocol::Grpc),
             "http/protobuf" | "http" => Ok(Protocol::HttpProtobuf),
-            other => Err(PtxError::Config(format!(
+            other => bail!(format!(
                 "unknown protocol '{other}', expected 'grpc' or 'http/protobuf'"
-            ))),
+            )),
         }
     }
 
@@ -46,14 +46,14 @@ pub enum Sampler {
 }
 
 impl Sampler {
-    pub fn parse(value: &str) -> PtxResult<Self> {
+    pub fn parse(value: &str) -> Result<Self> {
         match value {
             "always_on" => Ok(Sampler::AlwaysOn),
             "always_off" => Ok(Sampler::AlwaysOff),
             "parent_based_traceid_ratio" => Ok(Sampler::ParentBasedTraceIdRatio),
-            other => Err(PtxError::Config(format!(
+            other => bail!(format!(
                 "unknown sampler '{other}', expected 'always_on' | 'always_off' | 'parent_based_traceid_ratio'"
-            ))),
+            )),
         }
     }
 }
@@ -99,11 +99,11 @@ impl PyTraceSink {
         batch_max_queue: usize,
         batch_max_export: usize,
         batch_schedule_delay_ms: u64,
-    ) -> PyResult<Self> {
+    ) -> anyhow::Result<Self> {
         Protocol::parse(&protocol)?;
         Sampler::parse(&sampler)?;
         if endpoint.is_empty() {
-            return Err(PtxError::Config("TraceSink endpoint must not be empty".into()).into());
+            bail!("TraceSink endpoint must not be empty");
         }
         Ok(Self {
             endpoint,
@@ -145,10 +145,10 @@ impl PyMetricSink {
         headers: Option<HashMap<String, String>>,
         timeout_ms: u64,
         export_interval_ms: u64,
-    ) -> PyResult<Self> {
+    ) -> anyhow::Result<Self> {
         Protocol::parse(&protocol)?;
         if endpoint.is_empty() {
-            return Err(PtxError::Config("MetricSink endpoint must not be empty".into()).into());
+            bail!("MetricSink endpoint must not be empty");
         }
         Ok(Self {
             endpoint,
@@ -192,10 +192,10 @@ impl PyOtlpLogSink {
         batch_max_queue: usize,
         batch_max_export: usize,
         batch_schedule_delay_ms: u64,
-    ) -> PyResult<Self> {
+    ) -> anyhow::Result<Self> {
         Protocol::parse(&protocol)?;
         if endpoint.is_empty() {
-            return Err(PtxError::Config("OtlpLogSink endpoint must not be empty".into()).into());
+            bail!("OtlpLogSink endpoint must not be empty");
         }
         Ok(Self {
             endpoint,
@@ -241,18 +241,18 @@ impl PySlsLogSink {
         ak_secret: String,
         topic: String,
         source: String,
-    ) -> PyResult<Self> {
+    ) -> anyhow::Result<Self> {
         if endpoint.is_empty() {
-            return Err(PtxError::Config("SlsLogSink endpoint must not be empty".into()).into());
+            bail!("SlsLogSink endpoint must not be empty");
         }
         if project.is_empty() {
-            return Err(PtxError::Config("SlsLogSink project must not be empty".into()).into());
+            bail!("SlsLogSink project must not be empty");
         }
         if logstore.is_empty() {
-            return Err(PtxError::Config("SlsLogSink logstore must not be empty".into()).into());
+            bail!("SlsLogSink logstore must not be empty");
         }
         if ak_id.is_empty() || ak_secret.is_empty() {
-            return Err(PtxError::Config("SlsLogSink ak_id and ak_secret must not be empty".into()).into());
+            bail!("SlsLogSink ak_id and ak_secret must not be empty");
         }
         Ok(Self {
             endpoint,
@@ -371,9 +371,9 @@ impl PyConfig {
         console_format: String,
         log_filter: Option<String>,
         sinks: Option<Vec<Bound<'_, PyAny>>>,
-    ) -> PyResult<Self> {
+    ) -> anyhow::Result<Self> {
         if service_name.is_empty() {
-            return Err(PtxError::Config("service_name must not be empty".into()).into());
+            bail!("service_name must not be empty");
         }
         validate_console_format(&console_format)?;
 
@@ -386,28 +386,26 @@ impl PyConfig {
             for obj in sink_list {
                 if let Ok(s) = obj.extract::<PyTraceSink>() {
                     if trace_sink.is_some() {
-                        return Err(PtxError::Config("only one TraceSink allowed".into()).into());
+                        bail!("only one TraceSink allowed");
                     }
                     trace_sink = Some(s);
                 } else if let Ok(s) = obj.extract::<PyMetricSink>() {
                     if metric_sink.is_some() {
-                        return Err(PtxError::Config("only one MetricSink allowed".into()).into());
+                        bail!("only one MetricSink allowed");
                     }
                     metric_sink = Some(s);
                 } else if let Ok(s) = obj.extract::<PyOtlpLogSink>() {
                     if otlp_log_sink.is_some() {
-                        return Err(PtxError::Config("only one OtlpLogSink allowed".into()).into());
+                        bail!("only one OtlpLogSink allowed");
                     }
                     otlp_log_sink = Some(s);
                 } else if let Ok(s) = obj.extract::<PySlsLogSink>() {
                     if sls_log_sink.is_some() {
-                        return Err(PtxError::Config("only one SlsLogSink allowed".into()).into());
+                        bail!("only one SlsLogSink allowed");
                     }
                     sls_log_sink = Some(s);
                 } else {
-                    return Err(PtxError::Config(
-                        "sinks list must contain TraceSink, MetricSink, OtlpLogSink, or SlsLogSink".into(),
-                    ).into());
+                    bail!("sinks list must contain TraceSink, MetricSink, OtlpLogSink, or SlsLogSink");
                 }
             }
         }
@@ -438,7 +436,7 @@ impl PyConfig {
         )
     }
 
-    fn describe<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    fn describe<'py>(&self, py: Python<'py>) -> anyhow::Result<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
         dict.set_item("service_name", &self.service_name)?;
         dict.set_item("console_output", self.console_output)?;
@@ -454,11 +452,10 @@ impl PyConfig {
 }
 
 impl PyConfig {
-    pub fn resolve(&self) -> PtxResult<ResolvedConfig> {
-        validate_console_format(&self.console_format)
-            .map_err(|e| PtxError::Config(e.to_string()))?;
+    pub fn resolve(&self) -> Result<ResolvedConfig> {
+        validate_console_format(&self.console_format)?;
 
-        let traces = self.trace_sink.as_ref().map(|s| -> PtxResult<ResolvedTraceSink> {
+        let traces = self.trace_sink.as_ref().map(|s| -> Result<ResolvedTraceSink> {
             Ok(ResolvedTraceSink {
                 endpoint: s.endpoint.clone(),
                 protocol: Protocol::parse(&s.protocol)?,
@@ -472,7 +469,7 @@ impl PyConfig {
             })
         }).transpose()?;
 
-        let metrics = self.metric_sink.as_ref().map(|s| -> PtxResult<ResolvedMetricSink> {
+        let metrics = self.metric_sink.as_ref().map(|s| -> Result<ResolvedMetricSink> {
             Ok(ResolvedMetricSink {
                 endpoint: s.endpoint.clone(),
                 protocol: Protocol::parse(&s.protocol)?,
@@ -482,7 +479,7 @@ impl PyConfig {
             })
         }).transpose()?;
 
-        let otlp_logs = self.otlp_log_sink.as_ref().map(|s| -> PtxResult<ResolvedOtlpLogSink> {
+        let otlp_logs = self.otlp_log_sink.as_ref().map(|s| -> Result<ResolvedOtlpLogSink> {
             Ok(ResolvedOtlpLogSink {
                 endpoint: s.endpoint.clone(),
                 protocol: Protocol::parse(&s.protocol)?,
@@ -527,13 +524,10 @@ impl PyConfig {
     }
 }
 
-fn validate_console_format(fmt: &str) -> PyResult<()> {
+fn validate_console_format(fmt: &str) -> Result<()> {
     match fmt {
         "compact" | "pretty" | "json" => Ok(()),
-        other => Err(PtxError::Config(format!(
-            "unknown console_format '{other}', expected 'compact' | 'pretty' | 'json'"
-        ))
-        .into()),
+        other => bail!("unknown console_format '{other}', expected 'compact' | 'pretty' | 'json'"),
     }
 }
 

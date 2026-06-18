@@ -21,9 +21,10 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Registry;
 
 use crate::config::{ResolvedConfig, Sampler};
-use crate::error::{PtxError, PtxResult};
+use crate::error::{anyhow, Result};
 use crate::exporters::{build_log_exporter, build_metric_exporter, build_span_exporter};
 use crate::sls::build_resource;
+use crate::sls_log::{self, SlsLogHandle};
 
 static STATE: once_cell::sync::OnceCell<Mutex<Option<RuntimeState>>> =
     once_cell::sync::OnceCell::new();
@@ -35,6 +36,7 @@ pub struct RuntimeState {
     pub tracer_provider: Option<SdkTracerProvider>,
     pub meter_provider: Option<SdkMeterProvider>,
     pub logger_provider: Option<SdkLoggerProvider>,
+    pub sls_log_handle: Option<SlsLogHandle>,
 }
 
 fn cell() -> &'static Mutex<Option<RuntimeState>> {
@@ -45,10 +47,10 @@ pub fn is_initialized() -> bool {
     cell().lock().is_some()
 }
 
-pub fn install(config: ResolvedConfig) -> PtxResult<()> {
+pub fn install(config: ResolvedConfig) -> Result<()> {
     let mut guard = cell().lock();
     if guard.is_some() {
-        return Err(PtxError::AlreadyInitialized);
+        return Err(anyhow!("pytracingx is already initialized; call pytracingx.shutdown() before re-initializing"));
     }
 
     let resource = build_resource(&config);
@@ -121,10 +123,11 @@ pub fn install(config: ResolvedConfig) -> PtxResult<()> {
             None
         };
 
-        Ok::<_, PtxError>((tracer_provider, meter_provider, logger_provider))
+        Ok::<_, anyhow::Error>((tracer_provider, meter_provider, logger_provider))
     })?;
 
-    install_dispatcher(&config, tracer_provider.as_ref(), logger_provider.as_ref())?;
+    let sls_log_handle =
+        install_dispatcher(&config, tracer_provider.as_ref(), logger_provider.as_ref())?;
 
     global::set_text_map_propagator(TraceContextPropagator::new());
 
@@ -132,6 +135,7 @@ pub fn install(config: ResolvedConfig) -> PtxResult<()> {
         tracer_provider,
         meter_provider,
         logger_provider,
+        sls_log_handle,
     });
     Ok(())
 }
@@ -140,14 +144,14 @@ fn install_dispatcher(
     config: &ResolvedConfig,
     tracer_provider: Option<&SdkTracerProvider>,
     logger_provider: Option<&SdkLoggerProvider>,
-) -> PtxResult<()> {
+) -> Result<Option<SlsLogHandle>> {
     use tracing_subscriber::Layer;
 
     if GLOBAL_DISPATCH_INSTALLED.get().is_some() {
         tracing::warn!(
             "pytracingx: tracing dispatcher already installed; the first init() wins."
         );
-        return Ok(());
+        return Ok(None);
     }
 
     let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
@@ -168,22 +172,30 @@ fn install_dispatcher(
         layers.push(OpenTelemetryTracingBridge::new(lp).boxed());
     }
 
+    let sls_handle = if let Some(ref sls_cfg) = config.sls_log {
+        let (sls_layer, handle) = sls_log::create_sls_log_layer(sls_cfg, &config.service_name)?;
+        layers.push(sls_layer.boxed());
+        Some(handle)
+    } else {
+        None
+    };
+
     Registry::default()
         .with(layers)
         .try_init()
-        .map_err(|e| PtxError::Runtime(format!("set_global_default failed: {e}")))?;
+        .map_err(|e| anyhow!(format!("set_global_default failed: {e}")))?;
 
     let _ = GLOBAL_DISPATCH_INSTALLED.set(());
-    Ok(())
+    Ok(sls_handle)
 }
 
-fn build_env_filter(config: &ResolvedConfig) -> PtxResult<EnvFilter> {
+fn build_env_filter(config: &ResolvedConfig) -> Result<EnvFilter> {
     if let Some(custom) = &config.log_filter {
         return EnvFilter::try_new(custom)
-            .map_err(|e| PtxError::Config(format!("invalid log_filter '{custom}': {e}")));
+            .map_err(|e| anyhow!(format!("invalid log_filter '{custom}': {e}")));
     }
     EnvFilter::try_new(&config.console_level)
-        .map_err(|e| PtxError::Config(format!("EnvFilter build failed: {e}")))
+        .map_err(|e| anyhow!(format!("EnvFilter build failed: {e}")))
 }
 
 fn build_fmt_layer(
@@ -197,20 +209,41 @@ fn build_fmt_layer(
     }
 }
 
-pub fn uninstall() -> PtxResult<()> {
+pub fn uninstall() -> Result<()> {
     let mut guard = cell().lock();
     let Some(state) = guard.take() else {
         return Ok(());
     };
 
-    if let Some(Err(e)) = state.tracer_provider.as_ref().map(|tp| tp.shutdown()) {
-        tracing::warn!("trace shutdown error: {e:?}");
+    if let Some(handle) = &state.sls_log_handle {
+        handle.flush_and_shutdown();
     }
-    if let Some(Err(e)) = state.meter_provider.as_ref().map(|mp| mp.shutdown()) {
-        tracing::warn!("metric shutdown error: {e:?}");
+
+    let runtime = pyo3_async_runtimes::tokio::get_runtime();
+
+    // Give async exporters time to flush pending data before shutdown.
+    runtime.block_on(async {
+        if let Some(tp) = &state.tracer_provider {
+            let _ = tp.force_flush();
+        }
+        if let Some(mp) = &state.meter_provider {
+            let _ = mp.force_flush();
+        }
+        if let Some(lp) = &state.logger_provider {
+            let _ = lp.force_flush();
+        }
+        // Small grace period for in-flight exports to complete.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    });
+
+    if let Some(tp) = &state.tracer_provider {
+        let _ = tp.shutdown();
     }
-    if let Some(Err(e)) = state.logger_provider.as_ref().map(|lp| lp.shutdown()) {
-        tracing::warn!("log shutdown error: {e:?}");
+    if let Some(mp) = &state.meter_provider {
+        let _ = mp.shutdown();
+    }
+    if let Some(lp) = &state.logger_provider {
+        let _ = lp.shutdown();
     }
     Ok(())
 }
@@ -225,7 +258,7 @@ fn map_sampler(s: Sampler, ratio: f64) -> SdkSampler {
     }
 }
 
-pub fn force_flush() -> PtxResult<()> {
+pub fn force_flush() -> Result<()> {
     let guard = cell().lock();
     let Some(state) = guard.as_ref() else {
         return Ok(());

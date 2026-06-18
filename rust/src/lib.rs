@@ -9,7 +9,7 @@ mod logs;
 mod metrics;
 mod runtime;
 mod sls;
-// mod sls_log;  // temporarily disabled
+mod sls_log;
 mod traces;
 
 /// Initialize the global pytracingx providers from a `Config` instance.

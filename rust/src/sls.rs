@@ -5,15 +5,15 @@ use opentelemetry_sdk::Resource;
 use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
 
 use crate::config::ResolvedConfig;
-use crate::error::{PtxError, PtxResult};
+use crate::error::Result;
 
-pub fn headers_to_metadata(headers: &HashMap<String, String>) -> PtxResult<MetadataMap> {
+pub fn headers_to_metadata(headers: &HashMap<String, String>) -> Result<MetadataMap> {
     let mut map = MetadataMap::with_capacity(headers.len());
     for (k, v) in headers {
         let key = MetadataKey::from_bytes(k.to_ascii_lowercase().as_bytes())
-            .map_err(|e| PtxError::Config(format!("invalid header name '{k}': {e}")))?;
+            .map_err(|e| anyhow::anyhow!(format!("invalid header name '{k}': {e}")))?;
         let value = MetadataValue::try_from(v.as_str())
-            .map_err(|e| PtxError::Config(format!("invalid header value for '{k}': {e}")))?;
+            .map_err(|e| anyhow::anyhow!(format!("invalid header value for '{k}': {e}")))?;
         map.insert(key, value);
     }
     Ok(map)
@@ -46,12 +46,12 @@ pub fn build_resource(cfg: &ResolvedConfig) -> Resource {
         .build()
 }
 
-pub fn endpoint_host(endpoint: &str) -> PtxResult<String> {
+pub fn endpoint_host(endpoint: &str) -> Result<String> {
     let url = url::Url::parse(endpoint)
-        .map_err(|e| PtxError::Endpoint(format!("could not parse '{endpoint}': {e}")))?;
+        .map_err(|e| anyhow::anyhow!(format!("could not parse '{endpoint}': {e}")))?;
     url.host_str()
         .map(|s| s.to_string())
-        .ok_or_else(|| PtxError::Endpoint(format!("endpoint '{endpoint}' has no host")))
+        .ok_or_else(|| anyhow::anyhow!(format!("endpoint '{endpoint}' has no host")))
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
 use crate::config::ResolvedSlsLogSink;
-use crate::error::{PtxError, PtxResult};
+use crate::error::Result;
 
 const BATCH_SIZE: usize = 4096;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(3);
@@ -44,14 +44,14 @@ impl SlsLogHandle {
 pub fn create_sls_log_layer(
     cfg: &ResolvedSlsLogSink,
     service_name: &str,
-) -> PtxResult<(SlsLogLayer, SlsLogHandle)> {
+) -> Result<(SlsLogLayer, SlsLogHandle)> {
     let sls_config = SlsConfig::builder()
         .endpoint(&cfg.endpoint)
         .access_key(&cfg.ak_id, &cfg.ak_secret)
         .build()
-        .map_err(|e| PtxError::Config(format!("SLS client config error: {e}")))?;
+        .map_err(|e| anyhow::anyhow!(format!("SLS client config error: {e}")))?;
     let client = Client::from_config(sls_config)
-        .map_err(|e| PtxError::Config(format!("SLS client build error: {e}")))?;
+        .map_err(|e| anyhow::anyhow!(format!("SLS client build error: {e}")))?;
 
     let (tx, rx) = mpsc::unbounded_channel::<LogEntry>();
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);

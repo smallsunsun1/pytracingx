@@ -8,7 +8,7 @@ use tracing::Span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::context;
-use crate::error::PtxError;
+use crate::error::anyhow;
 
 /// Start a new span rooted at the current contextvars context.
 ///
@@ -25,7 +25,7 @@ pub fn start_span(
     kind: String,
 ) -> PyResult<PySpan> {
     if !crate::runtime::is_initialized() {
-        return Err(PtxError::NotInitialized.into());
+        return Err(anyhow!("pytracingx is not initialized; call pytracingx.init(config) first").into());
     }
     validate_span_kind(&kind)?;
 

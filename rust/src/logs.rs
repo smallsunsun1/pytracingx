@@ -3,7 +3,7 @@ use pyo3::types::PyDict;
 use serde_json::Value as JsonValue;
 use tracing::Level;
 
-use crate::error::PtxError;
+use crate::error::anyhow;
 use crate::runtime;
 
 #[pyclass(module = "pytracingx._native", name = "Logger")]
@@ -137,7 +137,7 @@ fn emit_event(
 #[pyfunction]
 pub fn get_logger(name: String) -> PyResult<PyLogger> {
     if !runtime::is_initialized() {
-        return Err(PtxError::NotInitialized.into());
+        return Err(anyhow!("pytracingx is not initialized; call pytracingx.init(config) first").into());
     }
     Ok(PyLogger::new(name))
 }
