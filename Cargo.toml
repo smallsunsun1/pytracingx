@@ -1,6 +1,6 @@
 [package]
 name = "pytracingx"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Rust + OpenTelemetry powered Python bindings for traces, metrics, and logs (SLS-first)"
 license = "MIT"
@@ -63,6 +63,7 @@ serde_json = "1.0.150"
 pythonize = "0.29"
 aliyun-log-rust-sdk = "0.3.0"
 aliyun-log-sdk-protobuf = "0.1.1"
+openssl-sys = { version = "0.9", features = ["vendored"] }
 
 [profile.release]
 opt-level = 3
