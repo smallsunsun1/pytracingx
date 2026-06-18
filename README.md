@@ -141,4 +141,4 @@ Requires Rust >= 1.75 and Python >= 3.9. Wheels are abi3 (`abi3-py39`).
 
 ## License
 
-Apache-2.0
+MIT

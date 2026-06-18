@@ -3,7 +3,7 @@ name = "pytracingx"
 version = "0.1.0"
 edition = "2024"
 description = "Rust + OpenTelemetry powered Python bindings for traces, metrics, and logs (SLS-first)"
-license = "Apache-2.0"
+license = "MIT"
 readme = "README.md"
 repository = "https://github.com/your-org/pytracingx"
 

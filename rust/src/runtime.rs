@@ -221,21 +221,15 @@ pub fn uninstall() -> Result<()> {
 
     let runtime = pyo3_async_runtimes::tokio::get_runtime();
 
-    // Give async exporters time to flush pending data before shutdown.
+    // Give in-flight async exports a grace period to complete before
+    // tearing down providers. The batch processors export on their own
+    // schedule; this sleep lets the last batch finish naturally.
     runtime.block_on(async {
-        if let Some(tp) = &state.tracer_provider {
-            let _ = tp.force_flush();
-        }
-        if let Some(mp) = &state.meter_provider {
-            let _ = mp.force_flush();
-        }
-        if let Some(lp) = &state.logger_provider {
-            let _ = lp.force_flush();
-        }
-        // Small grace period for in-flight exports to complete.
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
     });
 
+    // shutdown() internally attempts a final flush. Errors here are
+    // expected (backend unreachable at process exit) and not actionable.
     if let Some(tp) = &state.tracer_provider {
         let _ = tp.shutdown();
     }

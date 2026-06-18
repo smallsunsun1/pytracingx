@@ -23,13 +23,10 @@ fn init(py: Python<'_>, config: &config::PyConfig) -> PyResult<()> {
     Ok(())
 }
 
-/// Force-flush every active provider, then drop them.
+/// Gracefully flush pending data and tear down all providers.
 #[pyfunction]
 fn shutdown(py: Python<'_>) -> PyResult<()> {
-    py.detach(|| {
-        let _ = runtime::force_flush();
-        runtime::uninstall()
-    })?;
+    py.detach(runtime::uninstall)?;
     Ok(())
 }
 
