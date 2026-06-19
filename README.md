@@ -1,5 +1,7 @@
 # pytracingx
 
+[中文版 README](README.zh-CN.md)
+
 Rust + OpenTelemetry powered Python bindings for **traces**, **metrics** and **logs**, with first-class
 support for **Aliyun SLS** and **ARMS** as OTLP backends.
 
@@ -7,64 +9,63 @@ support for **Aliyun SLS** and **ARMS** as OTLP backends.
 
 | | pytracingx (Rust) | opentelemetry-python |
 |---|---|---|
-| **性能** | 序列化 (protobuf)、压缩 (gzip/lz4)、批处理、网络 I/O 全部在 Rust 原生线程完成,**不持有 GIL** | 所有导出逻辑在 Python 线程执行,受 GIL 限制,大量 span/metric 时可测到 5-15% CPU 开销 |
-| **内存** | span/metric 数据结构在 Rust 堆上,零 Python 对象开销 | 每个 span 是一个 Python 对象,属性是 dict,大流量下 GC 压力显著 |
-| **启动速度** | 单个 `.so` 文件,`import pytracingx` ~15ms | 需要 `opentelemetry-api` + `opentelemetry-sdk` + `opentelemetry-exporter-otlp` + grpcio/protobuf 等十余个包,冷启动 200-500ms |
-| **依赖** | Python 侧零运行时依赖(全部编译进 native module) | 拉入 grpcio(C 编译)、protobuf、googleapis-common-protos 等,wheel 体积 >50MB |
-| **GIL 友好** | `start_span()` / `counter.add()` / `logger.info()` 调用只做 FFI 入参转换(μs 级),然后立即释放 GIL 回到 Python | SDK 的 `start_span` 在 Python 侧做 context 管理、属性序列化、sampler 判断(10-50μs),全程持有 GIL |
-| **异步安全** | `contextvars` 管理 span context,`asyncio.Task` 天然继承;Rust 的 `tracing` 层不依赖 Python event loop | Python SDK 的 `BatchSpanProcessor` 开额外 daemon thread 并用 `threading.Event` 同步,与 uvloop 组合时偶有竞态 |
-| **终端输出** | `tracing` 的 `fmt::Layer` 统一输出 span 开始/结束 + 日志事件,格式可选 compact/pretty/json | 需要额外配置 `ConsoleSpanExporter` + `logging` handler,两套格式不统一 |
-| **Aliyun SLS 原生** | 内置 `SlsLogSink` 直接写任意 logstore(protobuf + lz4 + HMAC 签名全在 Rust 完成) | 需要额外引入 `aliyun-log-python-sdk` 或自行 HTTP 上报 |
-| **单 wheel** | `abi3-py39` 一份 wheel 覆盖 Python 3.9-3.13+,所有平台(manylinux/macOS/Windows) | 每个 Python 版本 + 平台单独编译 grpcio wheel |
+| **Performance** | Serialization (protobuf), compression (gzip/lz4), batching, network I/O all happen on Rust native threads — **never holds the GIL** | Every export step runs on Python threads under the GIL; 5–15% CPU overhead is measurable under heavy span/metric load |
+| **Memory** | Span/metric data structures live on the Rust heap, zero Python object overhead | Each span is a Python object with dict attributes; significant GC pressure under high traffic |
+| **Startup** | Single `.so` file, `import pytracingx` ~15ms | Pulls in `opentelemetry-api` + `-sdk` + `-exporter-otlp` + grpcio/protobuf and a dozen others, cold start 200–500ms |
+| **Dependencies** | Zero Python runtime deps (everything compiled into the native module) | Drags in grpcio (C build), protobuf, googleapis-common-protos; wheel size > 50MB |
+| **GIL friendliness** | `start_span()` / `counter.add()` / `logger.info()` only do FFI argument conversion (μs), then drop the GIL | Python SDK's `start_span` does context management, attribute serialization and sampler decisions in Python (10–50μs) holding the GIL throughout |
+| **Async safety** | Span context lives in `contextvars`, naturally inherited by `asyncio.Task`; the Rust `tracing` layer doesn't depend on the Python event loop | `BatchSpanProcessor` spawns extra daemon threads and uses `threading.Event`; occasional races when paired with uvloop |
+| **Console output** | `tracing`'s `fmt::Layer` unifies span begin/end + log events with compact / pretty / json formats | Needs a separate `ConsoleSpanExporter` plus a `logging` handler; two inconsistent formats |
+| **Native SLS** | Built-in `SlsLogSink` writes to any logstore directly (protobuf + lz4 + HMAC signing all done in Rust) | Requires `aliyun-log-python-sdk` or hand-rolled HTTP upload |
+| **Single wheel** | One `abi3-py39` wheel covers Python 3.9–3.13+ across all platforms (manylinux/macOS/Windows) | grpcio wheel must be built per Python version per platform |
 
-### 适用场景
+### When to use it
 
-- **高 QPS 服务**(>1000 RPS):Rust 的 batch export 在后台完成,Python 侧调用开销 < 1μs
-- **低延迟要求**:不会因为 span export 阻塞 GIL
-- **容器/Serverless**:单文件部署,冷启动快,无 grpcio 编译依赖
-- **阿里云全栈**:traces → ARMS,metrics → ARMS,logs → SLS 任意 logstore,一个 `Config` 搞定
+- **High-QPS services** (>1000 RPS): Rust handles batch export in the background; per-call overhead < 1μs on the Python side
+- **Latency-sensitive workloads**: span export never blocks the GIL
+- **Containers / serverless**: single-file deploy, fast cold start, no grpcio compilation
+- **Aliyun full stack**: traces → ARMS, metrics → ARMS, logs → any SLS logstore — one `Config` covers all
 
-## AI 时代的可观测性 — 为大模型推理而生
+## Observability for the AI era — built for LLM inference
 
-在 LLM / 大模型推理场景下,**任何 CPU 侧的可观测性开销都会直接影响 GPU 利用率**。
-当 Python 主线程被 trace 序列化、log 格式化、metric 聚合占据,GPU kernel 的提交、
-KV-cache 调度、batch 编排都会被推迟,表现为:
+In LLM / large model inference, **any CPU-side observability cost translates directly into GPU underutilization**.
+When the Python main thread is busy with trace serialization, log formatting and metric aggregation, GPU kernel
+launches, KV-cache scheduling and batch composition all get delayed. Symptoms include:
 
-- **TTFT (Time To First Token) 抖动**:span export 阻塞 GIL,推理请求入队延迟
-- **GPU bubble**:CPU 来不及喂数据,GPU SM 出现空转间隙,吞吐下降
-- **batch 调度劣化**:vLLM / SGLang 等推理引擎的 scheduler 依赖低延迟事件循环,
-  Python SDK 的 daemon thread 与 uvloop 抢占会破坏 continuous batching
+- **TTFT (Time To First Token) jitter**: span export blocks the GIL and request enqueue is delayed
+- **GPU bubbles**: the CPU can't feed data fast enough, GPU SMs idle, throughput drops
+- **Degraded batch scheduling**: vLLM / SGLang schedulers depend on a low-latency event loop; daemon threads from the Python SDK fight uvloop and break continuous batching
 
-pytracingx 的 Rust-native 设计天然适配这些场景:
+pytracingx's Rust-native design fits these scenarios naturally:
 
-| 痛点 | 传统 Python SDK | pytracingx |
+| Pain point | Traditional Python SDK | pytracingx |
 |---|---|---|
-| **GPU 调度受 GIL 阻塞** | `start_span` 持 GIL 10-50μs,推理 step 间被切走 | FFI 入参拷贝后立即释放 GIL,μs 级返回 |
-| **token-level 追踪开销** | 每个 token 一个 span 时,Python GC 压力陡增 | span 在 Rust 堆上分配,对 Python GC 零影响 |
-| **prompt/completion 日志体量** | 大 payload 在 Python 侧序列化拖慢主循环 | protobuf + 异步 batch 全在 Rust tokio runtime |
-| **多卡/多进程部署** | 每个 worker 拉起完整 Python OTel 栈,内存翻倍 | 单 `.so`,共享 abi3 wheel,显存外的常驻开销 < 5MB |
+| **GPU scheduling blocked by GIL** | `start_span` holds GIL for 10–50μs, preempting inference steps | FFI argument copy then GIL released, μs-level return |
+| **Token-level tracing overhead** | Per-token spans create heavy Python GC pressure | Spans allocated on the Rust heap, zero impact on Python GC |
+| **Prompt/completion log volume** | Large payloads serialized in Python slow down the main loop | Protobuf + async batching all run inside the Rust tokio runtime |
+| **Multi-GPU / multi-process deployment** | Each worker loads the full Python OTel stack, doubling memory | Single `.so`, shared abi3 wheel, < 5MB resident overhead beyond GPU memory |
 
-### 推理服务集成模式
+### Inference service integration pattern
 
 ```python
-# 在 vLLM / SGLang / TGI 等推理引擎入口处
+# At the entry point of vLLM / SGLang / TGI etc.
 with ptx.start_span("llm.inference", attributes={
     "llm.model": "qwen2.5-72b",
     "llm.prompt_tokens": prompt_len,
     "gen.batch_size": batch_size,
 }) as span:
-    output = engine.generate(prompts)        # GPU 工作不受打扰
+    output = engine.generate(prompts)        # GPU work runs undisturbed
     span.set_attribute("llm.completion_tokens", output.usage.completion_tokens)
     span.set_attribute("llm.ttft_ms", output.metrics.first_token_ms)
 ```
 
-观测维度建议:
+Suggested observation dimensions:
 
-- **Trace**:request → tokenize → schedule → prefill → decode → detokenize 全链路
-- **Metrics**:TTFT / TPOT (Time Per Output Token) / GPU SM 利用率 / KV-cache 命中率
-- **Logs**:prompt / completion 采样落盘到 SLS,便于离线 RAG / 微调数据回流
+- **Trace**: end-to-end request → tokenize → schedule → prefill → decode → detokenize
+- **Metrics**: TTFT / TPOT (Time Per Output Token) / GPU SM utilization / KV-cache hit rate
+- **Logs**: sample prompt / completion to SLS for offline RAG / fine-tuning data
 
-**核心理念**:让可观测性成为 AI 基础设施的一部分,而不是性能税。
+**Core idea**: observability should be part of the AI infrastructure, not a performance tax.
 
 ## Architecture
 
@@ -87,7 +88,21 @@ Python  ──►  ptx.start_span / ptx.get_logger / ptx.get_meter
                                    SLS / ARMS / any OTLP Collector
 ```
 
-Each signal is configured via a **Sink** object. A signal is enabled if its Sink is present in the `sinks` list.
+Each signal is configured via a **Sink** object. A signal is enabled if its Sink appears in the `sinks` list.
+
+## Installation
+
+```bash
+pip install pytracingx
+```
+
+Pre-built wheels are available on PyPI for:
+
+- **Linux** x86_64 / aarch64 — `manylinux_2_28` (glibc) and `musllinux_1_2` (Alpine)
+- **macOS** — universal2 (Intel + Apple Silicon)
+- **Python** 3.9, 3.10, 3.11, 3.12, 3.13+ (single abi3 wheel)
+
+No Rust toolchain or system OpenSSL is required at install time — everything is statically linked into the wheel.
 
 ## Quickstart
 
@@ -143,8 +158,8 @@ asyncio.run(main())
 |------|---------|----------|----------|
 | `TraceSink` | Any OTLP collector | gRPC / HTTP | Distributed tracing spans |
 | `MetricSink` | Any OTLP collector | gRPC / HTTP | Counters, histograms, gauges |
-| `OtlpLogSink` | Any OTLP collector | gRPC / HTTP | Logs via OTLP (falls into trace instance's `-logs` logstore on SLS) |
-| `SlsLogSink` | Aliyun SLS native API | HTTPS | Logs to **any** SLS logstore (not limited to trace instance) |
+| `OtlpLogSink` | Any OTLP collector | gRPC / HTTP | Logs via OTLP (lands in the trace instance's `-logs` logstore on SLS) |
+| `SlsLogSink` | Aliyun SLS native API | HTTPS | Logs to **any** SLS logstore (not limited to the trace instance) |
 
 ## Console-only mode
 
@@ -153,7 +168,7 @@ asyncio.run(main())
 ptx.init(ptx.Config(service_name="my-app", console_level="debug"))
 ```
 
-## Context propagation (server-side)
+## Context propagation (server side)
 
 ```python
 # with-syntax auto-restores context on exit
