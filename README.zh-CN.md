@@ -178,6 +178,13 @@ with ptx.extract_headers(dict(request.headers)):
         ...
 ```
 
+## 示例和基准测试
+
+- `examples/demo.py` — 完整异步示例,覆盖 traces + metrics + logs + context 传播
+- `examples/fastapi_middleware.py` — FastAPI 中间件,每个请求创建 server span 并传播 W3C trace context
+- `examples/traces_to_xtrace.py` — trace 路由到 ARMS,metrics/logs 走 SLS
+- `benchmarks/` — pytracingx 与 `opentelemetry-python` 在热路径上的对比微基准
+
 ## 桥接标准库 `logging`
 
 ```python
@@ -195,7 +202,7 @@ pip install maturin
 maturin develop --release
 ```
 
-要求 Rust >= 1.75,Python >= 3.9。Wheel 走 abi3 (`abi3-py39`)。
+要求 Rust >= 1.85 (edition 2024),Python >= 3.9。Wheel 走 abi3 (`abi3-py39`)。
 
 ## License
 

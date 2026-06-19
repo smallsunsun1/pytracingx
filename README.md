@@ -177,6 +177,13 @@ with ptx.extract_headers(dict(request.headers)):
         ...
 ```
 
+## Examples and benchmarks
+
+- `examples/demo.py` — comprehensive async example covering traces + metrics + logs + context propagation
+- `examples/fastapi_middleware.py` — FastAPI middleware that creates a server span per request and propagates W3C trace context
+- `examples/traces_to_xtrace.py` — route traces to ARMS while metrics/logs go to SLS
+- `benchmarks/` — microbenchmarks comparing pytracingx vs `opentelemetry-python` on the hot path
+
 ## Bridging stdlib `logging`
 
 ```python
@@ -194,7 +201,7 @@ pip install maturin
 maturin develop --release
 ```
 
-Requires Rust >= 1.75 and Python >= 3.9. Wheels are abi3 (`abi3-py39`).
+Requires Rust >= 1.85 (edition 2024) and Python >= 3.9. Wheels are abi3 (`abi3-py39`).
 
 ## License
 
