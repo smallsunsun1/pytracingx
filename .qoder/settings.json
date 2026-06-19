@@ -1,0 +1,21 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | { read -r f; case \"$f\" in python/pytracingx/*.py|tests/*.py) ruff format \"$f\" && ruff check --fix \"$f\" ;; *) ;; esac; } 2>/dev/null || true",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "jq -r '.tool_response.filePath // .tool_input.file_path' | { read -r f; case \"$f\" in *README.md|*README.zh-CN.md) en_changed=$(git diff --name-only HEAD -- README.md 2>/dev/null); zh_changed=$(git diff --name-only HEAD -- README.zh-CN.md 2>/dev/null); if [ -n \"$en_changed\" ] && [ -z \"$zh_changed\" ]; then echo \"[reminder] README.md was modified — please also update README.zh-CN.md to keep them in sync.\" >&2; elif [ -z \"$en_changed\" ] && [ -n \"$zh_changed\" ]; then echo \"[reminder] README.zh-CN.md was modified — please also update README.md to keep them in sync.\" >&2; fi ;; *) ;; esac; } 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

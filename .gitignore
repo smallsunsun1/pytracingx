@@ -1,6 +1,6 @@
 .vscode
 .cargo
-.qoder
+.qoder/settings.local.json
 .venv
 *.pyc
 __pycache__
