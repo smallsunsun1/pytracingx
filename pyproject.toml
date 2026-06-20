@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pytracingx"
-version = "0.1.2"
+version = "0.2.0"
 description = "Rust + OpenTelemetry powered Python bindings for traces, metrics, and logs (SLS-first)"
 readme = "README.md"
 requires-python = ">=3.9"
