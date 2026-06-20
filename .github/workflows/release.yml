@@ -115,6 +115,39 @@ jobs:
           name: wheels-macos-${{ matrix.target }}
           path: dist/*.whl
 
+  windows-wheels:
+    name: windows ${{ matrix.target }}
+    needs: verify-version
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: x64
+
+      # Strawberry Perl (needed by openssl-sys vendored) is already on
+      # windows-latest. NASM is also pre-installed. If a dependency complains
+      # about a missing tool, add `choco install -y <tool>` here.
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --strip
+          sccache: "true"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-${{ matrix.target }}
+          path: dist/*.whl
+
   build-sdist:
     name: sdist
     needs: verify-version
@@ -140,7 +173,7 @@ jobs:
 
   publish:
     name: publish to PyPI
-    needs: [linux-wheels, macos-wheels, build-sdist]
+    needs: [linux-wheels, macos-wheels, windows-wheels, build-sdist]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
     environment: pypi

@@ -10,7 +10,7 @@ use opentelemetry_sdk::metrics::{
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::runtime::Tokio;
 use opentelemetry_sdk::trace::{
-    BatchConfigBuilder, Sampler as SdkSampler, SdkTracerProvider,
+    BatchConfigBuilder, Sampler as SdkSampler, SdkTracerProvider, SpanLimits,
     span_processor_with_async_runtime::BatchSpanProcessor,
 };
 use parking_lot::Mutex;
@@ -63,20 +63,50 @@ pub fn install(config: ResolvedConfig) -> Result<()> {
                 protocol: t.protocol,
                 headers: &t.headers,
                 timeout_ms: t.timeout_ms,
+                raw_otlp: &t.raw_otlp,
+                temporality: None,
             };
             let exporter = build_span_exporter(&signal)?;
-            let batch_cfg = BatchConfigBuilder::default()
-                .with_max_queue_size(t.batch_max_queue)
-                .with_max_export_batch_size(t.batch_max_export)
-                .with_scheduled_delay(Duration::from_millis(t.batch_schedule_delay_ms))
-                .build();
+
+            let mut batch_builder = BatchConfigBuilder::default();
+            if let Some(v) = t.batch_max_queue {
+                batch_builder = batch_builder.with_max_queue_size(v);
+            }
+            if let Some(v) = t.batch_max_export {
+                batch_builder = batch_builder.with_max_export_batch_size(v);
+            }
+            if let Some(v) = t.batch_schedule_delay_ms {
+                batch_builder = batch_builder.with_scheduled_delay(Duration::from_millis(v));
+            }
+            if let Some(v) = t.max_export_timeout_ms {
+                batch_builder = batch_builder.with_max_export_timeout(Duration::from_millis(v));
+            }
             let processor = BatchSpanProcessor::builder(exporter, Tokio)
-                .with_batch_config(batch_cfg)
+                .with_batch_config(batch_builder.build())
                 .build();
+
+            let mut limits = SpanLimits::default();
+            if let Some(v) = t.max_attributes_per_span {
+                limits.max_attributes_per_span = v;
+            }
+            if let Some(v) = t.max_events_per_span {
+                limits.max_events_per_span = v;
+            }
+            if let Some(v) = t.max_links_per_span {
+                limits.max_links_per_span = v;
+            }
+            if let Some(v) = t.max_attributes_per_event {
+                limits.max_attributes_per_event = v;
+            }
+            if let Some(v) = t.max_attributes_per_link {
+                limits.max_attributes_per_link = v;
+            }
+
             let provider = SdkTracerProvider::builder()
                 .with_span_processor(processor)
                 .with_resource(resource.clone())
                 .with_sampler(map_sampler(t.sampler, t.sampler_arg))
+                .with_span_limits(limits)
                 .build();
             global::set_tracer_provider(provider.clone());
             Some(provider)
@@ -90,11 +120,19 @@ pub fn install(config: ResolvedConfig) -> Result<()> {
                 protocol: m.protocol,
                 headers: &m.headers,
                 timeout_ms: m.timeout_ms,
+                raw_otlp: &m.raw_otlp,
+                temporality: m.temporality,
             };
             let exporter = build_metric_exporter(&signal)?;
-            let reader = PeriodicReader::builder(exporter, Tokio)
-                .with_interval(Duration::from_millis(m.export_interval_ms))
-                .build();
+
+            let mut reader_builder = PeriodicReader::builder(exporter, Tokio);
+            if let Some(v) = m.export_interval_ms {
+                reader_builder = reader_builder.with_interval(Duration::from_millis(v));
+            }
+            if let Some(v) = m.export_timeout_ms {
+                reader_builder = reader_builder.with_timeout(Duration::from_millis(v));
+            }
+            let reader = reader_builder.build();
             let provider = SdkMeterProvider::builder()
                 .with_reader(reader)
                 .with_resource(resource.clone())
@@ -111,6 +149,8 @@ pub fn install(config: ResolvedConfig) -> Result<()> {
                 protocol: l.protocol,
                 headers: &l.headers,
                 timeout_ms: l.timeout_ms,
+                raw_otlp: &l.raw_otlp,
+                temporality: None,
             };
             let exporter = build_log_exporter(&signal)?;
             let processor = BatchLogProcessor::builder(exporter).build();

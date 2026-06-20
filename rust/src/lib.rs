@@ -61,6 +61,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<config::PyMetricSink>()?;
     m.add_class::<config::PyOtlpLogSink>()?;
     m.add_class::<config::PySlsLogSink>()?;
+    m.add_class::<config::PyRawOtlp>()?;
     m.add_class::<context::ContextHolder>()?;
 
     // tracing

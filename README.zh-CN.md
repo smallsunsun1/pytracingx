@@ -101,6 +101,7 @@ PyPI 上预编译的 wheel 覆盖以下平台:
 
 - **Linux** x86_64 / aarch64 — `manylinux_2_28` (glibc) 和 `musllinux_1_2` (Alpine)
 - **macOS** — universal2 (Intel + Apple Silicon)
+- **Windows** — x64 (MSVC)
 - **Python** 3.9 / 3.10 / 3.11 / 3.12 / 3.13+ (单一 abi3 wheel 通用)
 
 安装时不需要本机 Rust 工具链或系统 OpenSSL —— 所有依赖已经静态链接进 wheel。

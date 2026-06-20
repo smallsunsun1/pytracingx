@@ -179,6 +179,7 @@ def test_public_api() -> None:
         "Histogram",
         "Logger",
         "Meter",
+        "RawOtlp",
         "Span",
         "UpDownCounter",
         "current_trace_context",

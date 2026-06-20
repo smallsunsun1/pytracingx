@@ -100,6 +100,7 @@ Pre-built wheels are available on PyPI for:
 
 - **Linux** x86_64 / aarch64 — `manylinux_2_28` (glibc) and `musllinux_1_2` (Alpine)
 - **macOS** — universal2 (Intel + Apple Silicon)
+- **Windows** — x64 (MSVC)
 - **Python** 3.9, 3.10, 3.11, 3.12, 3.13+ (single abi3 wheel)
 
 No Rust toolchain or system OpenSSL is required at install time — everything is statically linked into the wheel.

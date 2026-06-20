@@ -9,40 +9,65 @@ __version__: str
 
 # ─── Sink types ───────────────────────────────────────────────────────────────
 
+class RawOtlp:
+    """Typed escape hatch for low-level OTLP knobs.
+
+    Pass an instance to a Sink's `raw_otlp` argument:
+
+        ptx.TraceSink(endpoint="...", raw_otlp=ptx.RawOtlp(compression="gzip"))
+
+    All fields are optional; only set what you need. Adding new fields here
+    is a non-breaking change.
+    """
+
+    def __init__(self, compression: str | None = ...) -> None: ...
+
 class TraceSink:
     def __init__(
         self,
         endpoint: str,
-        protocol: str = ...,
+        protocol: str | None = ...,
         headers: dict[str, str] | None = ...,
-        timeout_ms: int = ...,
-        sampler: str = ...,
-        sampler_arg: float = ...,
-        batch_max_queue: int = ...,
-        batch_max_export: int = ...,
-        batch_schedule_delay_ms: int = ...,
+        timeout_ms: int | None = ...,
+        sampler: str | None = ...,
+        sampler_arg: float | None = ...,
+        batch_max_queue: int | None = ...,
+        batch_max_export: int | None = ...,
+        batch_schedule_delay_ms: int | None = ...,
+        max_export_timeout_ms: int | None = ...,
+        max_attributes_per_span: int | None = ...,
+        max_events_per_span: int | None = ...,
+        max_links_per_span: int | None = ...,
+        max_attributes_per_event: int | None = ...,
+        max_attributes_per_link: int | None = ...,
+        raw_otlp: RawOtlp | None = ...,
     ) -> None: ...
 
 class MetricSink:
     def __init__(
         self,
         endpoint: str,
-        protocol: str = ...,
+        protocol: str | None = ...,
         headers: dict[str, str] | None = ...,
-        timeout_ms: int = ...,
-        export_interval_ms: int = ...,
+        timeout_ms: int | None = ...,
+        export_interval_ms: int | None = ...,
+        export_timeout_ms: int | None = ...,
+        temporality: str | None = ...,
+        raw_otlp: RawOtlp | None = ...,
     ) -> None: ...
 
 class OtlpLogSink:
     def __init__(
         self,
         endpoint: str,
-        protocol: str = ...,
+        protocol: str | None = ...,
         headers: dict[str, str] | None = ...,
-        timeout_ms: int = ...,
-        batch_max_queue: int = ...,
-        batch_max_export: int = ...,
-        batch_schedule_delay_ms: int = ...,
+        timeout_ms: int | None = ...,
+        batch_max_queue: int | None = ...,
+        batch_max_export: int | None = ...,
+        batch_schedule_delay_ms: int | None = ...,
+        max_export_timeout_ms: int | None = ...,
+        raw_otlp: RawOtlp | None = ...,
     ) -> None: ...
 
 class SlsLogSink:

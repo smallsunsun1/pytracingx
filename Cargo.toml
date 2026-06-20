@@ -39,6 +39,9 @@ opentelemetry-otlp = { version = "0.32", default-features = false, features = [
     "http-proto",
     "reqwest-client",
     "reqwest-rustls",
+    "gzip-tonic",
+    "zstd-tonic",
+    "gzip-http",
 ] }
 opentelemetry-semantic-conventions = "0.32"
 tonic = { version = "0.14", features = ["tls-native-roots"] }

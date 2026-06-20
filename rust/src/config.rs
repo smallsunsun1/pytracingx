@@ -3,15 +3,9 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::error::{bail, Result};
+use crate::error::{Result, bail};
 
-const DEFAULT_BATCH_QUEUE: usize = 2_048;
-const DEFAULT_BATCH_EXPORT: usize = 512;
-const DEFAULT_BATCH_DELAY_MS: u64 = 5_000;
-const DEFAULT_TIMEOUT_MS: u64 = 10_000;
-const DEFAULT_METRIC_INTERVAL_MS: u64 = 60_000;
-
-// ─── Protocol / Sampler enums ────────────────────────────────────────────────
+// ─── Protocol / Sampler / Temporality / Compression enums ────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
@@ -58,20 +52,107 @@ impl Sampler {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Temporality {
+    Cumulative,
+    Delta,
+    LowMemory,
+}
+
+impl Temporality {
+    pub fn parse(value: &str) -> Result<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "cumulative" => Ok(Temporality::Cumulative),
+            "delta" => Ok(Temporality::Delta),
+            "lowmemory" | "low_memory" => Ok(Temporality::LowMemory),
+            other => bail!(format!(
+                "unknown temporality '{other}', expected 'cumulative' | 'delta' | 'lowmemory'"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Compression {
+    Gzip,
+    Zstd,
+}
+
+impl Compression {
+    pub fn parse(value: &str) -> Result<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "gzip" => Ok(Compression::Gzip),
+            "zstd" => Ok(Compression::Zstd),
+            other => bail!(format!(
+                "unknown compression '{other}', expected 'gzip' | 'zstd'"
+            )),
+        }
+    }
+}
+
+// ─── Raw OTLP escape-hatch (typed pyclass) ───────────────────────────────────
+
+/// Layer-3 escape hatch: a typed bag of low-level OTLP knobs.
+///
+/// Construct with named fields:
+///
+/// ```python
+/// from pytracingx import RawOtlp
+/// sink = ptx.TraceSink(endpoint="...", raw_otlp=RawOtlp(compression="gzip"))
+/// ```
+///
+/// All fields are optional. Adding a new field here is a non-breaking change.
+#[pyclass(module = "pytracingx._native", name = "RawOtlp", from_py_object)]
+#[derive(Debug, Clone, Default)]
+pub struct PyRawOtlp {
+    pub(crate) compression: Option<Compression>,
+}
+
+#[pymethods]
+impl PyRawOtlp {
+    #[new]
+    #[pyo3(signature = (compression = None))]
+    fn new(compression: Option<String>) -> anyhow::Result<Self> {
+        let compression = compression
+            .map(|s| Compression::parse(&s))
+            .transpose()?;
+        Ok(Self { compression })
+    }
+
+    fn __repr__(&self) -> String {
+        match self.compression {
+            Some(Compression::Gzip) => "RawOtlp(compression='gzip')".to_string(),
+            Some(Compression::Zstd) => "RawOtlp(compression='zstd')".to_string(),
+            None => "RawOtlp()".to_string(),
+        }
+    }
+}
+
 // ─── Sink pyclasses ──────────────────────────────────────────────────────────
+//
+// All numeric / string knobs default to None; when the runtime builds the
+// underlying OTel SDK it only calls the corresponding `with_*` setter when
+// the user supplied a value, otherwise the OTel-rust SDK default applies.
 
 #[pyclass(module = "pytracingx._native", name = "TraceSink", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTraceSink {
     pub(crate) endpoint: String,
-    pub(crate) protocol: String,
+    pub(crate) protocol: Option<String>,
     pub(crate) headers: HashMap<String, String>,
-    pub(crate) timeout_ms: u64,
-    pub(crate) sampler: String,
-    pub(crate) sampler_arg: f64,
-    pub(crate) batch_max_queue: usize,
-    pub(crate) batch_max_export: usize,
-    pub(crate) batch_schedule_delay_ms: u64,
+    pub(crate) timeout_ms: Option<u64>,
+    pub(crate) sampler: Option<String>,
+    pub(crate) sampler_arg: Option<f64>,
+    pub(crate) batch_max_queue: Option<usize>,
+    pub(crate) batch_max_export: Option<usize>,
+    pub(crate) batch_schedule_delay_ms: Option<u64>,
+    pub(crate) max_export_timeout_ms: Option<u64>,
+    pub(crate) max_attributes_per_span: Option<u32>,
+    pub(crate) max_events_per_span: Option<u32>,
+    pub(crate) max_links_per_span: Option<u32>,
+    pub(crate) max_attributes_per_event: Option<u32>,
+    pub(crate) max_attributes_per_link: Option<u32>,
+    pub(crate) raw_otlp: PyRawOtlp,
 }
 
 #[pymethods]
@@ -79,31 +160,49 @@ impl PyTraceSink {
     #[new]
     #[pyo3(signature = (
         endpoint,
-        protocol = "grpc".to_string(),
+        protocol = None,
         headers = None,
-        timeout_ms = DEFAULT_TIMEOUT_MS,
-        sampler = "parent_based_traceid_ratio".to_string(),
-        sampler_arg = 1.0,
-        batch_max_queue = DEFAULT_BATCH_QUEUE,
-        batch_max_export = DEFAULT_BATCH_EXPORT,
-        batch_schedule_delay_ms = DEFAULT_BATCH_DELAY_MS,
+        timeout_ms = None,
+        sampler = None,
+        sampler_arg = None,
+        batch_max_queue = None,
+        batch_max_export = None,
+        batch_schedule_delay_ms = None,
+        max_export_timeout_ms = None,
+        max_attributes_per_span = None,
+        max_events_per_span = None,
+        max_links_per_span = None,
+        max_attributes_per_event = None,
+        max_attributes_per_link = None,
+        raw_otlp = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         endpoint: String,
-        protocol: String,
+        protocol: Option<String>,
         headers: Option<HashMap<String, String>>,
-        timeout_ms: u64,
-        sampler: String,
-        sampler_arg: f64,
-        batch_max_queue: usize,
-        batch_max_export: usize,
-        batch_schedule_delay_ms: u64,
+        timeout_ms: Option<u64>,
+        sampler: Option<String>,
+        sampler_arg: Option<f64>,
+        batch_max_queue: Option<usize>,
+        batch_max_export: Option<usize>,
+        batch_schedule_delay_ms: Option<u64>,
+        max_export_timeout_ms: Option<u64>,
+        max_attributes_per_span: Option<u32>,
+        max_events_per_span: Option<u32>,
+        max_links_per_span: Option<u32>,
+        max_attributes_per_event: Option<u32>,
+        max_attributes_per_link: Option<u32>,
+        raw_otlp: Option<PyRawOtlp>,
     ) -> anyhow::Result<Self> {
-        Protocol::parse(&protocol)?;
-        Sampler::parse(&sampler)?;
         if endpoint.is_empty() {
             bail!("TraceSink endpoint must not be empty");
+        }
+        if let Some(p) = &protocol {
+            Protocol::parse(p)?;
+        }
+        if let Some(s) = &sampler {
+            Sampler::parse(s)?;
         }
         Ok(Self {
             endpoint,
@@ -115,6 +214,13 @@ impl PyTraceSink {
             batch_max_queue,
             batch_max_export,
             batch_schedule_delay_ms,
+            max_export_timeout_ms,
+            max_attributes_per_span,
+            max_events_per_span,
+            max_links_per_span,
+            max_attributes_per_event,
+            max_attributes_per_link,
+            raw_otlp: raw_otlp.unwrap_or_default(),
         })
     }
 }
@@ -123,10 +229,13 @@ impl PyTraceSink {
 #[derive(Debug, Clone)]
 pub struct PyMetricSink {
     pub(crate) endpoint: String,
-    pub(crate) protocol: String,
+    pub(crate) protocol: Option<String>,
     pub(crate) headers: HashMap<String, String>,
-    pub(crate) timeout_ms: u64,
-    pub(crate) export_interval_ms: u64,
+    pub(crate) timeout_ms: Option<u64>,
+    pub(crate) export_interval_ms: Option<u64>,
+    pub(crate) export_timeout_ms: Option<u64>,
+    pub(crate) temporality: Option<String>,
+    pub(crate) raw_otlp: PyRawOtlp,
 }
 
 #[pymethods]
@@ -134,21 +243,33 @@ impl PyMetricSink {
     #[new]
     #[pyo3(signature = (
         endpoint,
-        protocol = "grpc".to_string(),
+        protocol = None,
         headers = None,
-        timeout_ms = DEFAULT_TIMEOUT_MS,
-        export_interval_ms = DEFAULT_METRIC_INTERVAL_MS,
+        timeout_ms = None,
+        export_interval_ms = None,
+        export_timeout_ms = None,
+        temporality = None,
+        raw_otlp = None,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         endpoint: String,
-        protocol: String,
+        protocol: Option<String>,
         headers: Option<HashMap<String, String>>,
-        timeout_ms: u64,
-        export_interval_ms: u64,
+        timeout_ms: Option<u64>,
+        export_interval_ms: Option<u64>,
+        export_timeout_ms: Option<u64>,
+        temporality: Option<String>,
+        raw_otlp: Option<PyRawOtlp>,
     ) -> anyhow::Result<Self> {
-        Protocol::parse(&protocol)?;
         if endpoint.is_empty() {
             bail!("MetricSink endpoint must not be empty");
+        }
+        if let Some(p) = &protocol {
+            Protocol::parse(p)?;
+        }
+        if let Some(t) = &temporality {
+            Temporality::parse(t)?;
         }
         Ok(Self {
             endpoint,
@@ -156,6 +277,9 @@ impl PyMetricSink {
             headers: headers.unwrap_or_default(),
             timeout_ms,
             export_interval_ms,
+            export_timeout_ms,
+            temporality,
+            raw_otlp: raw_otlp.unwrap_or_default(),
         })
     }
 }
@@ -164,12 +288,14 @@ impl PyMetricSink {
 #[derive(Debug, Clone)]
 pub struct PyOtlpLogSink {
     pub(crate) endpoint: String,
-    pub(crate) protocol: String,
+    pub(crate) protocol: Option<String>,
     pub(crate) headers: HashMap<String, String>,
-    pub(crate) timeout_ms: u64,
-    pub(crate) batch_max_queue: usize,
-    pub(crate) batch_max_export: usize,
-    pub(crate) batch_schedule_delay_ms: u64,
+    pub(crate) timeout_ms: Option<u64>,
+    pub(crate) batch_max_queue: Option<usize>,
+    pub(crate) batch_max_export: Option<usize>,
+    pub(crate) batch_schedule_delay_ms: Option<u64>,
+    pub(crate) max_export_timeout_ms: Option<u64>,
+    pub(crate) raw_otlp: PyRawOtlp,
 }
 
 #[pymethods]
@@ -177,25 +303,32 @@ impl PyOtlpLogSink {
     #[new]
     #[pyo3(signature = (
         endpoint,
-        protocol = "grpc".to_string(),
+        protocol = None,
         headers = None,
-        timeout_ms = DEFAULT_TIMEOUT_MS,
-        batch_max_queue = DEFAULT_BATCH_QUEUE,
-        batch_max_export = DEFAULT_BATCH_EXPORT,
-        batch_schedule_delay_ms = DEFAULT_BATCH_DELAY_MS,
+        timeout_ms = None,
+        batch_max_queue = None,
+        batch_max_export = None,
+        batch_schedule_delay_ms = None,
+        max_export_timeout_ms = None,
+        raw_otlp = None,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         endpoint: String,
-        protocol: String,
+        protocol: Option<String>,
         headers: Option<HashMap<String, String>>,
-        timeout_ms: u64,
-        batch_max_queue: usize,
-        batch_max_export: usize,
-        batch_schedule_delay_ms: u64,
+        timeout_ms: Option<u64>,
+        batch_max_queue: Option<usize>,
+        batch_max_export: Option<usize>,
+        batch_schedule_delay_ms: Option<u64>,
+        max_export_timeout_ms: Option<u64>,
+        raw_otlp: Option<PyRawOtlp>,
     ) -> anyhow::Result<Self> {
-        Protocol::parse(&protocol)?;
         if endpoint.is_empty() {
             bail!("OtlpLogSink endpoint must not be empty");
+        }
+        if let Some(p) = &protocol {
+            Protocol::parse(p)?;
         }
         Ok(Self {
             endpoint,
@@ -205,6 +338,8 @@ impl PyOtlpLogSink {
             batch_max_queue,
             batch_max_export,
             batch_schedule_delay_ms,
+            max_export_timeout_ms,
+            raw_otlp: raw_otlp.unwrap_or_default(),
         })
     }
 }
@@ -267,18 +402,29 @@ impl PySlsLogSink {
 }
 
 // ─── Resolved config types (Rust-internal) ───────────────────────────────────
+//
+// Resolved* mirrors Py* but with the protocol/sampler/temporality strings
+// already parsed into typed enums. None values stay None — the runtime checks
+// for Some(..) before invoking the SDK setter.
 
 #[derive(Debug, Clone)]
 pub struct ResolvedTraceSink {
     pub endpoint: String,
     pub protocol: Protocol,
     pub headers: HashMap<String, String>,
-    pub timeout_ms: u64,
+    pub timeout_ms: Option<u64>,
     pub sampler: Sampler,
     pub sampler_arg: f64,
-    pub batch_max_queue: usize,
-    pub batch_max_export: usize,
-    pub batch_schedule_delay_ms: u64,
+    pub batch_max_queue: Option<usize>,
+    pub batch_max_export: Option<usize>,
+    pub batch_schedule_delay_ms: Option<u64>,
+    pub max_export_timeout_ms: Option<u64>,
+    pub max_attributes_per_span: Option<u32>,
+    pub max_events_per_span: Option<u32>,
+    pub max_links_per_span: Option<u32>,
+    pub max_attributes_per_event: Option<u32>,
+    pub max_attributes_per_link: Option<u32>,
+    pub raw_otlp: PyRawOtlp,
 }
 
 #[derive(Debug, Clone)]
@@ -286,8 +432,11 @@ pub struct ResolvedMetricSink {
     pub endpoint: String,
     pub protocol: Protocol,
     pub headers: HashMap<String, String>,
-    pub timeout_ms: u64,
-    pub export_interval_ms: u64,
+    pub timeout_ms: Option<u64>,
+    pub export_interval_ms: Option<u64>,
+    pub export_timeout_ms: Option<u64>,
+    pub temporality: Option<Temporality>,
+    pub raw_otlp: PyRawOtlp,
 }
 
 #[derive(Debug, Clone)]
@@ -295,10 +444,12 @@ pub struct ResolvedOtlpLogSink {
     pub endpoint: String,
     pub protocol: Protocol,
     pub headers: HashMap<String, String>,
-    pub timeout_ms: u64,
-    pub batch_max_queue: usize,
-    pub batch_max_export: usize,
-    pub batch_schedule_delay_ms: u64,
+    pub timeout_ms: Option<u64>,
+    pub batch_max_queue: Option<usize>,
+    pub batch_max_export: Option<usize>,
+    pub batch_schedule_delay_ms: Option<u64>,
+    pub max_export_timeout_ms: Option<u64>,
+    pub raw_otlp: PyRawOtlp,
 }
 
 #[derive(Debug, Clone)]
@@ -331,7 +482,9 @@ pub struct SignalTransport<'a> {
     pub endpoint: &'a str,
     pub protocol: Protocol,
     pub headers: &'a HashMap<String, String>,
-    pub timeout_ms: u64,
+    pub timeout_ms: Option<u64>,
+    pub raw_otlp: &'a PyRawOtlp,
+    pub temporality: Option<Temporality>,
 }
 
 // ─── PyConfig ────────────────────────────────────────────────────────────────
@@ -405,7 +558,9 @@ impl PyConfig {
                     }
                     sls_log_sink = Some(s);
                 } else {
-                    bail!("sinks list must contain TraceSink, MetricSink, OtlpLogSink, or SlsLogSink");
+                    bail!(
+                        "sinks list must contain TraceSink, MetricSink, OtlpLogSink, or SlsLogSink"
+                    );
                 }
             }
         }
@@ -451,62 +606,100 @@ impl PyConfig {
     }
 }
 
+const DEFAULT_PROTOCOL: &str = "grpc";
+const DEFAULT_SAMPLER: &str = "parent_based_traceid_ratio";
+const DEFAULT_SAMPLER_ARG: f64 = 1.0;
+
 impl PyConfig {
     pub fn resolve(&self) -> Result<ResolvedConfig> {
         validate_console_format(&self.console_format)?;
 
-        let traces = self.trace_sink.as_ref().map(|s| -> Result<ResolvedTraceSink> {
-            Ok(ResolvedTraceSink {
-                endpoint: s.endpoint.clone(),
-                protocol: Protocol::parse(&s.protocol)?,
-                headers: s.headers.clone(),
-                timeout_ms: s.timeout_ms,
-                sampler: Sampler::parse(&s.sampler)?,
-                sampler_arg: s.sampler_arg,
-                batch_max_queue: s.batch_max_queue,
-                batch_max_export: s.batch_max_export,
-                batch_schedule_delay_ms: s.batch_schedule_delay_ms,
+        let traces = self
+            .trace_sink
+            .as_ref()
+            .map(|s| -> Result<ResolvedTraceSink> {
+                let protocol =
+                    Protocol::parse(s.protocol.as_deref().unwrap_or(DEFAULT_PROTOCOL))?;
+                let sampler = Sampler::parse(s.sampler.as_deref().unwrap_or(DEFAULT_SAMPLER))?;
+                Ok(ResolvedTraceSink {
+                    endpoint: s.endpoint.clone(),
+                    protocol,
+                    headers: s.headers.clone(),
+                    timeout_ms: s.timeout_ms,
+                    sampler,
+                    sampler_arg: s.sampler_arg.unwrap_or(DEFAULT_SAMPLER_ARG),
+                    batch_max_queue: s.batch_max_queue,
+                    batch_max_export: s.batch_max_export,
+                    batch_schedule_delay_ms: s.batch_schedule_delay_ms,
+                    max_export_timeout_ms: s.max_export_timeout_ms,
+                    max_attributes_per_span: s.max_attributes_per_span,
+                    max_events_per_span: s.max_events_per_span,
+                    max_links_per_span: s.max_links_per_span,
+                    max_attributes_per_event: s.max_attributes_per_event,
+                    max_attributes_per_link: s.max_attributes_per_link,
+                    raw_otlp: s.raw_otlp.clone(),
+                })
             })
-        }).transpose()?;
+            .transpose()?;
 
-        let metrics = self.metric_sink.as_ref().map(|s| -> Result<ResolvedMetricSink> {
-            Ok(ResolvedMetricSink {
-                endpoint: s.endpoint.clone(),
-                protocol: Protocol::parse(&s.protocol)?,
-                headers: s.headers.clone(),
-                timeout_ms: s.timeout_ms,
-                export_interval_ms: s.export_interval_ms,
+        let metrics = self
+            .metric_sink
+            .as_ref()
+            .map(|s| -> Result<ResolvedMetricSink> {
+                let protocol =
+                    Protocol::parse(s.protocol.as_deref().unwrap_or(DEFAULT_PROTOCOL))?;
+                let temporality = s
+                    .temporality
+                    .as_deref()
+                    .map(Temporality::parse)
+                    .transpose()?;
+                Ok(ResolvedMetricSink {
+                    endpoint: s.endpoint.clone(),
+                    protocol,
+                    headers: s.headers.clone(),
+                    timeout_ms: s.timeout_ms,
+                    export_interval_ms: s.export_interval_ms,
+                    export_timeout_ms: s.export_timeout_ms,
+                    temporality,
+                    raw_otlp: s.raw_otlp.clone(),
+                })
             })
-        }).transpose()?;
+            .transpose()?;
 
-        let otlp_logs = self.otlp_log_sink.as_ref().map(|s| -> Result<ResolvedOtlpLogSink> {
-            Ok(ResolvedOtlpLogSink {
-                endpoint: s.endpoint.clone(),
-                protocol: Protocol::parse(&s.protocol)?,
-                headers: s.headers.clone(),
-                timeout_ms: s.timeout_ms,
-                batch_max_queue: s.batch_max_queue,
-                batch_max_export: s.batch_max_export,
-                batch_schedule_delay_ms: s.batch_schedule_delay_ms,
+        let otlp_logs = self
+            .otlp_log_sink
+            .as_ref()
+            .map(|s| -> Result<ResolvedOtlpLogSink> {
+                let protocol =
+                    Protocol::parse(s.protocol.as_deref().unwrap_or(DEFAULT_PROTOCOL))?;
+                Ok(ResolvedOtlpLogSink {
+                    endpoint: s.endpoint.clone(),
+                    protocol,
+                    headers: s.headers.clone(),
+                    timeout_ms: s.timeout_ms,
+                    batch_max_queue: s.batch_max_queue,
+                    batch_max_export: s.batch_max_export,
+                    batch_schedule_delay_ms: s.batch_schedule_delay_ms,
+                    max_export_timeout_ms: s.max_export_timeout_ms,
+                    raw_otlp: s.raw_otlp.clone(),
+                })
             })
-        }).transpose()?;
+            .transpose()?;
 
-        let sls_log = self.sls_log_sink.as_ref().map(|s| {
-            ResolvedSlsLogSink {
-                endpoint: s.endpoint.clone(),
-                project: s.project.clone(),
-                logstore: s.logstore.clone(),
-                ak_id: s.ak_id.clone(),
-                ak_secret: s.ak_secret.clone(),
-                topic: s.topic.clone(),
-                source: if s.source.is_empty() {
-                    hostname::get()
-                        .map(|h| h.to_string_lossy().into_owned())
-                        .unwrap_or_default()
-                } else {
-                    s.source.clone()
-                },
-            }
+        let sls_log = self.sls_log_sink.as_ref().map(|s| ResolvedSlsLogSink {
+            endpoint: s.endpoint.clone(),
+            project: s.project.clone(),
+            logstore: s.logstore.clone(),
+            ak_id: s.ak_id.clone(),
+            ak_secret: s.ak_secret.clone(),
+            topic: s.topic.clone(),
+            source: if s.source.is_empty() {
+                hostname::get()
+                    .map(|h| h.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            } else {
+                s.source.clone()
+            },
         });
 
         Ok(ResolvedConfig {
@@ -527,7 +720,9 @@ impl PyConfig {
 fn validate_console_format(fmt: &str) -> Result<()> {
     match fmt {
         "compact" | "pretty" | "json" => Ok(()),
-        other => bail!("unknown console_format '{other}', expected 'compact' | 'pretty' | 'json'"),
+        other => bail!(
+            "unknown console_format '{other}', expected 'compact' | 'pretty' | 'json'"
+        ),
     }
 }
 
@@ -538,7 +733,10 @@ mod tests {
     #[test]
     fn protocol_parse_valid() {
         assert_eq!(Protocol::parse("grpc").unwrap(), Protocol::Grpc);
-        assert_eq!(Protocol::parse("http/protobuf").unwrap(), Protocol::HttpProtobuf);
+        assert_eq!(
+            Protocol::parse("http/protobuf").unwrap(),
+            Protocol::HttpProtobuf
+        );
         assert_eq!(Protocol::parse("http").unwrap(), Protocol::HttpProtobuf);
     }
 
@@ -551,11 +749,37 @@ mod tests {
     fn sampler_parse_valid() {
         assert_eq!(Sampler::parse("always_on").unwrap(), Sampler::AlwaysOn);
         assert_eq!(Sampler::parse("always_off").unwrap(), Sampler::AlwaysOff);
-        assert_eq!(Sampler::parse("parent_based_traceid_ratio").unwrap(), Sampler::ParentBasedTraceIdRatio);
+        assert_eq!(
+            Sampler::parse("parent_based_traceid_ratio").unwrap(),
+            Sampler::ParentBasedTraceIdRatio
+        );
     }
 
     #[test]
     fn sampler_parse_invalid() {
         assert!(Sampler::parse("custom").is_err());
+    }
+
+    #[test]
+    fn temporality_parse_valid() {
+        assert_eq!(Temporality::parse("cumulative").unwrap(), Temporality::Cumulative);
+        assert_eq!(Temporality::parse("delta").unwrap(), Temporality::Delta);
+        assert_eq!(Temporality::parse("LowMemory").unwrap(), Temporality::LowMemory);
+    }
+
+    #[test]
+    fn temporality_parse_invalid() {
+        assert!(Temporality::parse("foo").is_err());
+    }
+
+    #[test]
+    fn compression_parse_valid() {
+        assert_eq!(Compression::parse("gzip").unwrap(), Compression::Gzip);
+        assert_eq!(Compression::parse("Zstd").unwrap(), Compression::Zstd);
+    }
+
+    #[test]
+    fn compression_parse_invalid() {
+        assert!(Compression::parse("snappy").is_err());
     }
 }
