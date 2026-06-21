@@ -167,7 +167,8 @@ asyncio.run(main())
 
 ```python
 # 不配 sinks → 不发网络,只输出到终端
-ptx.init(ptx.Config(service_name="my-app", console_level="debug"))
+ptx.init(ptx.Config(service_name="my-app"))
+# 通过 RUST_LOG 环境变量控制日志级别: RUST_LOG=debug python app.py
 ```
 
 ## 上下文传播 (server 侧)

@@ -166,7 +166,8 @@ asyncio.run(main())
 
 ```python
 # No sinks → no network, just terminal output
-ptx.init(ptx.Config(service_name="my-app", console_level="debug"))
+ptx.init(ptx.Config(service_name="my-app"))
+# Control log level via RUST_LOG env var: RUST_LOG=debug python app.py
 ```
 
 ## Context propagation (server side)

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aliyun_log_rust_sdk::{Client, Config as SlsConfig, FromConfig};
@@ -21,14 +22,14 @@ struct LogEntry {
     message: String,
     logger_name: String,
     attributes: String,
-    service_name: String,
+    service_name: Arc<str>,
     trace_id: String,
     span_id: String,
 }
 
 pub struct SlsLogLayer {
     tx: mpsc::UnboundedSender<LogEntry>,
-    service_name: String,
+    service_name: Arc<str>,
 }
 
 pub struct SlsLogHandle {
@@ -73,7 +74,7 @@ pub fn create_sls_log_layer(
 
     let layer = SlsLogLayer {
         tx,
-        service_name: service_name.to_string(),
+        service_name: Arc::from(service_name),
     };
     let handle = SlsLogHandle {
         shutdown_tx,
@@ -158,7 +159,7 @@ async fn flush_batch(
             log.add_content_kv("logger_name", &entry.logger_name);
         }
         if !entry.service_name.is_empty() {
-            log.add_content_kv("service.name", &entry.service_name);
+            log.add_content_kv("service.name", &*entry.service_name);
         }
         if !entry.trace_id.is_empty() {
             log.add_content_kv("trace_id", &entry.trace_id);
@@ -188,16 +189,11 @@ where
 {
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
         let meta = event.metadata();
+        // Only forward INFO/WARN/ERROR to SLS; skip internal DEBUG/TRACE from hyper/reqwest/etc.
         if *meta.level() > tracing::Level::INFO {
             return;
         }
-        let level = match *meta.level() {
-            tracing::Level::TRACE => "TRACE",
-            tracing::Level::DEBUG => "DEBUG",
-            tracing::Level::INFO => "INFO",
-            tracing::Level::WARN => "WARN",
-            tracing::Level::ERROR => "ERROR",
-        };
+        let level = meta.level().as_str();
 
         let mut visitor = FieldVisitor::default();
         event.record(&mut visitor);
