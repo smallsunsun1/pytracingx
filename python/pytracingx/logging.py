@@ -61,8 +61,6 @@ class SLSLoggingHandler(logging.Handler):
         super().__init__(level=level)
 
     def emit(self, record: logging.LogRecord) -> None:  # noqa: D401
-        if not _native.is_initialized():
-            return
         try:
             severity, severity_text = _severity_for(record.levelno)
             attrs: dict[str, Any] = {

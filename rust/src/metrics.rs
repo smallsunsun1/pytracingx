@@ -3,7 +3,6 @@ use opentelemetry::{global, InstrumentationScope};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::error::anyhow;
 use crate::traces::py_attributes_to_kv;
 
 #[pyclass(module = "pytracingx._native", name = "Meter")]
@@ -169,8 +168,5 @@ impl PyGauge {
 
 #[pyfunction]
 pub fn get_meter(name: String) -> PyResult<PyMeter> {
-    if !crate::runtime::is_initialized() {
-        return Err(anyhow!("pytracingx is not initialized; call pytracingx.init(config) first").into());
-    }
     Ok(PyMeter::new(name))
 }

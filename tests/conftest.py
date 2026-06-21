@@ -1,9 +1,4 @@
-"""Shared pytest fixtures.
-
-The Rust `tracing` dispatcher is one-shot per process: once installed it
-cannot be replaced. We init exactly once per session and reuse that runtime
-for all tests.
-"""
+"""Shared pytest fixtures."""
 
 from __future__ import annotations
 
@@ -31,8 +26,13 @@ def console_only_config() -> ptx.Config:
     return _make_config()
 
 
+_init_done = False
+
+
 @pytest.fixture
 def initialized():
-    if not ptx.is_initialized():
+    global _init_done
+    if not _init_done:
         ptx.init(_make_config())
+        _init_done = True
     yield

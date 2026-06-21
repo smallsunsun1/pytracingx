@@ -3,9 +3,6 @@ use pyo3::types::PyDict;
 use serde_json::Value as JsonValue;
 use tracing::Level;
 
-use crate::error::anyhow;
-use crate::runtime;
-
 #[pyclass(module = "pytracingx._native", name = "Logger")]
 pub struct PyLogger {
     name: String,
@@ -77,9 +74,6 @@ pub fn emit_log_record(
     severity_text: String,
     attributes: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<()> {
-    if !runtime::is_initialized() {
-        return Ok(());
-    }
     let level = severity_to_level(severity_number);
     let attrs_json = serialize_attributes(attributes)?;
     let severity_text_static = leak_static(severity_text);
@@ -136,9 +130,6 @@ fn emit_event(
 
 #[pyfunction]
 pub fn get_logger(name: String) -> PyResult<PyLogger> {
-    if !runtime::is_initialized() {
-        return Err(anyhow!("pytracingx is not initialized; call pytracingx.init(config) first").into());
-    }
     Ok(PyLogger::new(name))
 }
 

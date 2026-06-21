@@ -468,13 +468,11 @@ pub struct ResolvedConfig {
     pub service_name: String,
     pub resource_attributes: HashMap<String, String>,
     pub console_output: bool,
-    pub console_level: String,
     pub console_format: String,
-    pub log_filter: Option<String>,
-    pub traces: Option<ResolvedTraceSink>,
-    pub metrics: Option<ResolvedMetricSink>,
-    pub otlp_logs: Option<ResolvedOtlpLogSink>,
-    pub sls_log: Option<ResolvedSlsLogSink>,
+    pub traces: Vec<ResolvedTraceSink>,
+    pub metrics: Vec<ResolvedMetricSink>,
+    pub otlp_logs: Vec<ResolvedOtlpLogSink>,
+    pub sls_logs: Vec<ResolvedSlsLogSink>,
 }
 
 /// Borrowed view of transport params, used by exporter builders.
@@ -495,13 +493,11 @@ pub struct PyConfig {
     pub(crate) service_name: String,
     pub(crate) resource_attributes: HashMap<String, String>,
     pub(crate) console_output: bool,
-    pub(crate) console_level: String,
     pub(crate) console_format: String,
-    pub(crate) log_filter: Option<String>,
-    pub(crate) trace_sink: Option<PyTraceSink>,
-    pub(crate) metric_sink: Option<PyMetricSink>,
-    pub(crate) otlp_log_sink: Option<PyOtlpLogSink>,
-    pub(crate) sls_log_sink: Option<PySlsLogSink>,
+    pub(crate) trace_sinks: Vec<PyTraceSink>,
+    pub(crate) metric_sinks: Vec<PyMetricSink>,
+    pub(crate) otlp_log_sinks: Vec<PyOtlpLogSink>,
+    pub(crate) sls_log_sinks: Vec<PySlsLogSink>,
 }
 
 #[pymethods]
@@ -511,18 +507,14 @@ impl PyConfig {
         service_name,
         resource_attributes = None,
         console_output = true,
-        console_level = "info".to_string(),
         console_format = "compact".to_string(),
-        log_filter = None,
         sinks = None,
     ))]
     fn new(
         service_name: String,
         resource_attributes: Option<HashMap<String, String>>,
         console_output: bool,
-        console_level: String,
         console_format: String,
-        log_filter: Option<String>,
         sinks: Option<Vec<Bound<'_, PyAny>>>,
     ) -> anyhow::Result<Self> {
         if service_name.is_empty() {
@@ -530,33 +522,21 @@ impl PyConfig {
         }
         validate_console_format(&console_format)?;
 
-        let mut trace_sink: Option<PyTraceSink> = None;
-        let mut metric_sink: Option<PyMetricSink> = None;
-        let mut otlp_log_sink: Option<PyOtlpLogSink> = None;
-        let mut sls_log_sink: Option<PySlsLogSink> = None;
+        let mut trace_sinks = Vec::new();
+        let mut metric_sinks = Vec::new();
+        let mut otlp_log_sinks = Vec::new();
+        let mut sls_log_sinks = Vec::new();
 
         if let Some(sink_list) = sinks {
             for obj in sink_list {
                 if let Ok(s) = obj.extract::<PyTraceSink>() {
-                    if trace_sink.is_some() {
-                        bail!("only one TraceSink allowed");
-                    }
-                    trace_sink = Some(s);
+                    trace_sinks.push(s);
                 } else if let Ok(s) = obj.extract::<PyMetricSink>() {
-                    if metric_sink.is_some() {
-                        bail!("only one MetricSink allowed");
-                    }
-                    metric_sink = Some(s);
+                    metric_sinks.push(s);
                 } else if let Ok(s) = obj.extract::<PyOtlpLogSink>() {
-                    if otlp_log_sink.is_some() {
-                        bail!("only one OtlpLogSink allowed");
-                    }
-                    otlp_log_sink = Some(s);
+                    otlp_log_sinks.push(s);
                 } else if let Ok(s) = obj.extract::<PySlsLogSink>() {
-                    if sls_log_sink.is_some() {
-                        bail!("only one SlsLogSink allowed");
-                    }
-                    sls_log_sink = Some(s);
+                    sls_log_sinks.push(s);
                 } else {
                     bail!(
                         "sinks list must contain TraceSink, MetricSink, OtlpLogSink, or SlsLogSink"
@@ -569,24 +549,22 @@ impl PyConfig {
             service_name,
             resource_attributes: resource_attributes.unwrap_or_default(),
             console_output,
-            console_level,
             console_format,
-            log_filter,
-            trace_sink,
-            metric_sink,
-            otlp_log_sink,
-            sls_log_sink,
+            trace_sinks,
+            metric_sinks,
+            otlp_log_sinks,
+            sls_log_sinks,
         })
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "Config(service_name='{}', traces={}, metrics={}, otlp_logs={}, sls_log={}, console={})",
+            "Config(service_name='{}', traces={}, metrics={}, otlp_logs={}, sls_logs={}, console={})",
             self.service_name,
-            self.trace_sink.is_some(),
-            self.metric_sink.is_some(),
-            self.otlp_log_sink.is_some(),
-            self.sls_log_sink.is_some(),
+            self.trace_sinks.len(),
+            self.metric_sinks.len(),
+            self.otlp_log_sinks.len(),
+            self.sls_log_sinks.len(),
             self.console_output,
         )
     }
@@ -595,13 +573,11 @@ impl PyConfig {
         let dict = PyDict::new(py);
         dict.set_item("service_name", &self.service_name)?;
         dict.set_item("console_output", self.console_output)?;
-        dict.set_item("console_level", &self.console_level)?;
         dict.set_item("console_format", &self.console_format)?;
-        dict.set_item("log_filter", self.log_filter.clone())?;
-        dict.set_item("traces", self.trace_sink.is_some())?;
-        dict.set_item("metrics", self.metric_sink.is_some())?;
-        dict.set_item("otlp_logs", self.otlp_log_sink.is_some())?;
-        dict.set_item("sls_log", self.sls_log_sink.is_some())?;
+        dict.set_item("traces", self.trace_sinks.len())?;
+        dict.set_item("metrics", self.metric_sinks.len())?;
+        dict.set_item("otlp_logs", self.otlp_log_sinks.len())?;
+        dict.set_item("sls_logs", self.sls_log_sinks.len())?;
         Ok(dict)
     }
 }
@@ -614,105 +590,94 @@ impl PyConfig {
     pub fn resolve(&self) -> Result<ResolvedConfig> {
         validate_console_format(&self.console_format)?;
 
-        let traces = self
-            .trace_sink
-            .as_ref()
-            .map(|s| -> Result<ResolvedTraceSink> {
-                let protocol =
-                    Protocol::parse(s.protocol.as_deref().unwrap_or(DEFAULT_PROTOCOL))?;
-                let sampler = Sampler::parse(s.sampler.as_deref().unwrap_or(DEFAULT_SAMPLER))?;
-                Ok(ResolvedTraceSink {
-                    endpoint: s.endpoint.clone(),
-                    protocol,
-                    headers: s.headers.clone(),
-                    timeout_ms: s.timeout_ms,
-                    sampler,
-                    sampler_arg: s.sampler_arg.unwrap_or(DEFAULT_SAMPLER_ARG),
-                    batch_max_queue: s.batch_max_queue,
-                    batch_max_export: s.batch_max_export,
-                    batch_schedule_delay_ms: s.batch_schedule_delay_ms,
-                    max_export_timeout_ms: s.max_export_timeout_ms,
-                    max_attributes_per_span: s.max_attributes_per_span,
-                    max_events_per_span: s.max_events_per_span,
-                    max_links_per_span: s.max_links_per_span,
-                    max_attributes_per_event: s.max_attributes_per_event,
-                    max_attributes_per_link: s.max_attributes_per_link,
-                    raw_otlp: s.raw_otlp.clone(),
-                })
-            })
-            .transpose()?;
+        let mut traces = Vec::new();
+        for s in &self.trace_sinks {
+            let protocol = Protocol::parse(s.protocol.as_deref().unwrap_or(DEFAULT_PROTOCOL))?;
+            let sampler = Sampler::parse(s.sampler.as_deref().unwrap_or(DEFAULT_SAMPLER))?;
+            traces.push(ResolvedTraceSink {
+                endpoint: s.endpoint.clone(),
+                protocol,
+                headers: s.headers.clone(),
+                timeout_ms: s.timeout_ms,
+                sampler,
+                sampler_arg: s.sampler_arg.unwrap_or(DEFAULT_SAMPLER_ARG),
+                batch_max_queue: s.batch_max_queue,
+                batch_max_export: s.batch_max_export,
+                batch_schedule_delay_ms: s.batch_schedule_delay_ms,
+                max_export_timeout_ms: s.max_export_timeout_ms,
+                max_attributes_per_span: s.max_attributes_per_span,
+                max_events_per_span: s.max_events_per_span,
+                max_links_per_span: s.max_links_per_span,
+                max_attributes_per_event: s.max_attributes_per_event,
+                max_attributes_per_link: s.max_attributes_per_link,
+                raw_otlp: s.raw_otlp.clone(),
+            });
+        }
 
-        let metrics = self
-            .metric_sink
-            .as_ref()
-            .map(|s| -> Result<ResolvedMetricSink> {
-                let protocol =
-                    Protocol::parse(s.protocol.as_deref().unwrap_or(DEFAULT_PROTOCOL))?;
-                let temporality = s
-                    .temporality
-                    .as_deref()
-                    .map(Temporality::parse)
-                    .transpose()?;
-                Ok(ResolvedMetricSink {
-                    endpoint: s.endpoint.clone(),
-                    protocol,
-                    headers: s.headers.clone(),
-                    timeout_ms: s.timeout_ms,
-                    export_interval_ms: s.export_interval_ms,
-                    export_timeout_ms: s.export_timeout_ms,
-                    temporality,
-                    raw_otlp: s.raw_otlp.clone(),
-                })
-            })
-            .transpose()?;
+        let mut metrics = Vec::new();
+        for s in &self.metric_sinks {
+            let protocol = Protocol::parse(s.protocol.as_deref().unwrap_or(DEFAULT_PROTOCOL))?;
+            let temporality = s
+                .temporality
+                .as_deref()
+                .map(Temporality::parse)
+                .transpose()?;
+            metrics.push(ResolvedMetricSink {
+                endpoint: s.endpoint.clone(),
+                protocol,
+                headers: s.headers.clone(),
+                timeout_ms: s.timeout_ms,
+                export_interval_ms: s.export_interval_ms,
+                export_timeout_ms: s.export_timeout_ms,
+                temporality,
+                raw_otlp: s.raw_otlp.clone(),
+            });
+        }
 
-        let otlp_logs = self
-            .otlp_log_sink
-            .as_ref()
-            .map(|s| -> Result<ResolvedOtlpLogSink> {
-                let protocol =
-                    Protocol::parse(s.protocol.as_deref().unwrap_or(DEFAULT_PROTOCOL))?;
-                Ok(ResolvedOtlpLogSink {
-                    endpoint: s.endpoint.clone(),
-                    protocol,
-                    headers: s.headers.clone(),
-                    timeout_ms: s.timeout_ms,
-                    batch_max_queue: s.batch_max_queue,
-                    batch_max_export: s.batch_max_export,
-                    batch_schedule_delay_ms: s.batch_schedule_delay_ms,
-                    max_export_timeout_ms: s.max_export_timeout_ms,
-                    raw_otlp: s.raw_otlp.clone(),
-                })
-            })
-            .transpose()?;
+        let mut otlp_logs = Vec::new();
+        for s in &self.otlp_log_sinks {
+            let protocol = Protocol::parse(s.protocol.as_deref().unwrap_or(DEFAULT_PROTOCOL))?;
+            otlp_logs.push(ResolvedOtlpLogSink {
+                endpoint: s.endpoint.clone(),
+                protocol,
+                headers: s.headers.clone(),
+                timeout_ms: s.timeout_ms,
+                batch_max_queue: s.batch_max_queue,
+                batch_max_export: s.batch_max_export,
+                batch_schedule_delay_ms: s.batch_schedule_delay_ms,
+                max_export_timeout_ms: s.max_export_timeout_ms,
+                raw_otlp: s.raw_otlp.clone(),
+            });
+        }
 
-        let sls_log = self.sls_log_sink.as_ref().map(|s| ResolvedSlsLogSink {
-            endpoint: s.endpoint.clone(),
-            project: s.project.clone(),
-            logstore: s.logstore.clone(),
-            ak_id: s.ak_id.clone(),
-            ak_secret: s.ak_secret.clone(),
-            topic: s.topic.clone(),
-            source: if s.source.is_empty() {
-                hostname::get()
-                    .map(|h| h.to_string_lossy().into_owned())
-                    .unwrap_or_default()
-            } else {
-                s.source.clone()
-            },
-        });
+        let mut sls_logs = Vec::new();
+        for s in &self.sls_log_sinks {
+            sls_logs.push(ResolvedSlsLogSink {
+                endpoint: s.endpoint.clone(),
+                project: s.project.clone(),
+                logstore: s.logstore.clone(),
+                ak_id: s.ak_id.clone(),
+                ak_secret: s.ak_secret.clone(),
+                topic: s.topic.clone(),
+                source: if s.source.is_empty() {
+                    hostname::get()
+                        .map(|h| h.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                } else {
+                    s.source.clone()
+                },
+            });
+        }
 
         Ok(ResolvedConfig {
             service_name: self.service_name.clone(),
             resource_attributes: self.resource_attributes.clone(),
             console_output: self.console_output,
-            console_level: self.console_level.clone(),
             console_format: self.console_format.clone(),
-            log_filter: self.log_filter.clone(),
             traces,
             metrics,
             otlp_logs,
-            sls_log,
+            sls_logs,
         })
     }
 }

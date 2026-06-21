@@ -12,8 +12,8 @@ def test_console_only_config() -> None:
     d = cfg.describe()
     assert d["service_name"] == "svc"
     assert d["console_output"] is True
-    assert d["traces"] is False
-    assert d["metrics"] is False
+    assert d["traces"] == 0
+    assert d["metrics"] == 0
 
 
 def test_config_with_trace_sink() -> None:
@@ -22,8 +22,8 @@ def test_config_with_trace_sink() -> None:
         sinks=[ptx.TraceSink(endpoint="https://collector:4317")],
     )
     d = cfg.describe()
-    assert d["traces"] is True
-    assert d["metrics"] is False
+    assert d["traces"] == 1
+    assert d["metrics"] == 0
 
 
 def test_config_with_all_sinks() -> None:
@@ -43,10 +43,21 @@ def test_config_with_all_sinks() -> None:
         ],
     )
     d = cfg.describe()
-    assert d["traces"] is True
-    assert d["metrics"] is True
-    assert d["otlp_logs"] is True
-    assert d["sls_log"] is True
+    assert d["traces"] == 1
+    assert d["metrics"] == 1
+    assert d["otlp_logs"] == 1
+    assert d["sls_logs"] == 1
+
+
+def test_config_with_multiple_trace_sinks() -> None:
+    cfg = ptx.Config(
+        service_name="svc",
+        sinks=[
+            ptx.TraceSink(endpoint="http://a"),
+            ptx.TraceSink(endpoint="http://b"),
+        ],
+    )
+    assert cfg.describe()["traces"] == 2
 
 
 def test_empty_service_name_rejected() -> None:
@@ -85,17 +96,6 @@ def test_sls_log_sink_validation() -> None:
         )
 
 
-def test_duplicate_trace_sink_rejected() -> None:
-    with pytest.raises((ValueError, RuntimeError), match="only one TraceSink"):
-        ptx.Config(
-            service_name="svc",
-            sinks=[
-                ptx.TraceSink(endpoint="http://a"),
-                ptx.TraceSink(endpoint="http://b"),
-            ],
-        )
-
-
 def test_unknown_console_format_rejected() -> None:
     with pytest.raises((ValueError, RuntimeError), match="unknown console_format"):
         ptx.Config(service_name="svc", console_format="xml")
@@ -114,7 +114,7 @@ def test_repr() -> None:
     )
     r = repr(cfg)
     assert "service_name='svc'" in r
-    assert "traces=true" in r.lower()
+    assert "traces=1" in r
 
 
 # ── Layer 2: SDK knobs ────────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ def test_trace_sink_span_limits_accepted() -> None:
         max_export_timeout_ms=60_000,
     )
     cfg = ptx.Config(service_name="svc", sinks=[sink])
-    assert cfg.describe()["traces"] is True
+    assert cfg.describe()["traces"] == 1
 
 
 @pytest.mark.parametrize("temp", ["cumulative", "delta", "lowmemory", "LowMemory"])
@@ -140,7 +140,7 @@ def test_metric_sink_temporality_accepted(temp: str) -> None:
         service_name="svc",
         sinks=[ptx.MetricSink(endpoint="http://x/metrics", temporality=temp)],
     )
-    assert cfg.describe()["metrics"] is True
+    assert cfg.describe()["metrics"] == 1
 
 
 def test_metric_sink_unknown_temporality_rejected() -> None:
@@ -153,7 +153,7 @@ def test_metric_sink_export_timeout() -> None:
         service_name="svc",
         sinks=[ptx.MetricSink(endpoint="http://x/metrics", export_timeout_ms=15_000)],
     )
-    assert cfg.describe()["metrics"] is True
+    assert cfg.describe()["metrics"] == 1
 
 
 def test_otlp_log_sink_export_timeout() -> None:
@@ -161,7 +161,7 @@ def test_otlp_log_sink_export_timeout() -> None:
         service_name="svc",
         sinks=[ptx.OtlpLogSink(endpoint="https://collector:4317", max_export_timeout_ms=45_000)],
     )
-    assert cfg.describe()["otlp_logs"] is True
+    assert cfg.describe()["otlp_logs"] == 1
 
 
 # ── Layer 3: typed RawOtlp escape hatch ───────────────────────────────────────
@@ -188,13 +188,12 @@ def test_raw_otlp_unknown_compression_rejected() -> None:
 
 
 def test_raw_otlp_no_args_is_ok() -> None:
-    """RawOtlp() with no fields = pure default OTel behaviour."""
     raw = ptx.RawOtlp()
     cfg = ptx.Config(
         service_name="svc",
         sinks=[ptx.TraceSink(endpoint="http://x/traces", raw_otlp=raw)],
     )
-    assert cfg.describe()["traces"] is True
+    assert cfg.describe()["traces"] == 1
 
 
 def test_raw_otlp_repr() -> None:
@@ -206,12 +205,10 @@ def test_raw_otlp_repr() -> None:
 def test_sink_raw_otlp_none_is_ok() -> None:
     sink = ptx.TraceSink(endpoint="http://x/traces", raw_otlp=None)
     cfg = ptx.Config(service_name="svc", sinks=[sink])
-    assert cfg.describe()["traces"] is True
+    assert cfg.describe()["traces"] == 1
 
 
 def test_sink_default_options_use_otel_defaults() -> None:
-    """All knobs are Option<None>; the Rust runtime should fall back to
-    opentelemetry-rust defaults without any user overrides."""
     sink = ptx.TraceSink(endpoint="http://x/traces")
     cfg = ptx.Config(service_name="svc", sinks=[sink])
-    assert cfg.describe()["traces"] is True
+    assert cfg.describe()["traces"] == 1

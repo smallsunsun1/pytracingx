@@ -38,24 +38,23 @@ from opentelemetry.sdk.trace.export import (
 import pytracingx as ptx
 
 # ── pytracingx setup ──────────────────────────────────────────────────────────
-if not ptx.is_initialized():
-    ptx.init(
-        ptx.Config(
-            service_name="bench",
-            console_output=False,
-            sinks=[
-                ptx.TraceSink(
-                    endpoint="http://127.0.0.1:1",
-                    sampler="always_on",
-                    batch_schedule_delay_ms=600_000,
-                ),
-                ptx.MetricSink(
-                    endpoint="http://127.0.0.1:1",
-                    export_interval_ms=600_000,
-                ),
-            ],
-        )
+ptx.init(
+    ptx.Config(
+        service_name="bench",
+        console_output=False,
+        sinks=[
+            ptx.TraceSink(
+                endpoint="http://127.0.0.1:1",
+                sampler="always_on",
+                batch_schedule_delay_ms=600_000,
+            ),
+            ptx.MetricSink(
+                endpoint="http://127.0.0.1:1",
+                export_interval_ms=600_000,
+            ),
+        ],
     )
+)
 
 _PTX_METER = ptx.get_meter("bench")
 _PTX_COUNTER = _PTX_METER.counter("bench_counter")

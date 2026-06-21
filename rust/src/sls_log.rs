@@ -33,11 +33,16 @@ pub struct SlsLogLayer {
 
 pub struct SlsLogHandle {
     shutdown_tx: mpsc::Sender<()>,
+    done_rx: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
 }
 
 impl SlsLogHandle {
     pub fn flush_and_shutdown(&self) {
         let _ = self.shutdown_tx.try_send(());
+        if let Some(rx) = self.done_rx.lock().unwrap().take() {
+            let runtime = pyo3_async_runtimes::tokio::get_runtime();
+            let _ = runtime.block_on(rx);
+        }
     }
 }
 
@@ -55,6 +60,7 @@ pub fn create_sls_log_layer(
 
     let (tx, rx) = mpsc::unbounded_channel::<LogEntry>();
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
 
     let project = cfg.project.clone();
     let logstore = cfg.logstore.clone();
@@ -62,14 +68,17 @@ pub fn create_sls_log_layer(
     let source = cfg.source.clone();
 
     tokio::spawn(background_writer(
-        client, rx, shutdown_rx, project, logstore, topic, source,
+        client, rx, shutdown_rx, done_tx, project, logstore, topic, source,
     ));
 
     let layer = SlsLogLayer {
         tx,
         service_name: service_name.to_string(),
     };
-    let handle = SlsLogHandle { shutdown_tx };
+    let handle = SlsLogHandle {
+        shutdown_tx,
+        done_rx: std::sync::Mutex::new(Some(done_rx)),
+    };
     Ok((layer, handle))
 }
 
@@ -77,6 +86,7 @@ async fn background_writer(
     client: Client,
     mut rx: mpsc::UnboundedReceiver<LogEntry>,
     mut shutdown_rx: mpsc::Receiver<()>,
+    done_tx: tokio::sync::oneshot::Sender<()>,
     project: String,
     logstore: String,
     topic: String,
@@ -97,8 +107,8 @@ async fn background_writer(
                         }
                     }
                     None => {
-                        // Channel closed (runtime dropped) → final flush
                         flush_batch(&client, &project, &logstore, &topic, &source, &mut batch).await;
+                        let _ = done_tx.send(());
                         return;
                     }
                 }
@@ -109,11 +119,11 @@ async fn background_writer(
                 }
             }
             _ = shutdown_rx.recv() => {
-                // Drain remaining items from the channel
                 while let Ok(e) = rx.try_recv() {
                     batch.push(e);
                 }
                 flush_batch(&client, &project, &logstore, &topic, &source, &mut batch).await;
+                let _ = done_tx.send(());
                 return;
             }
         }
@@ -178,6 +188,9 @@ where
 {
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
         let meta = event.metadata();
+        if *meta.level() > tracing::Level::INFO {
+            return;
+        }
         let level = match *meta.level() {
             tracing::Level::TRACE => "TRACE",
             tracing::Level::DEBUG => "DEBUG",

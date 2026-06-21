@@ -190,7 +190,6 @@ def test_public_api() -> None:
         "get_meter",
         "init",
         "inject_headers",
-        "is_initialized",
         "restore_context",
         "shutdown",
         "start_span",

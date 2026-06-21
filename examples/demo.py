@@ -33,23 +33,40 @@ async def main() -> None:
     # --- Init: endpoints from env, or console-only if not set ---
     sinks = []
     if os.environ.get("TRACES_ENDPOINT"):
-        sinks.append(ptx.TraceSink(
-            endpoint=os.environ["TRACES_ENDPOINT"],
-            protocol="http/protobuf",
-        ))
+        sinks.append(
+            ptx.TraceSink(
+                endpoint=os.environ["TRACES_ENDPOINT"],
+                protocol="http/protobuf",
+            )
+        )
     if os.environ.get("METRICS_ENDPOINT"):
-        sinks.append(ptx.MetricSink(
-            endpoint=os.environ["METRICS_ENDPOINT"],
-            protocol="http/protobuf",
-        ))
+        sinks.append(
+            ptx.MetricSink(
+                endpoint=os.environ["METRICS_ENDPOINT"],
+                protocol="http/protobuf",
+            )
+        )
+    if os.environ.get("LOGS_ENDPOINT"):
+        sinks.append(
+            ptx.SlsLogSink(
+                endpoint=os.environ["LOGS_ENDPOINT"],
+                project=os.environ.get("SLS_PROJECT"),
+                logstore=os.environ.get("SLS_LOGSTORE"),
+                ak_id=os.environ.get("SLS_AK_ID", ""),
+                ak_secret=os.environ.get("SLS_AK_SECRET", ""),
+                topic="",
+                source="",
+            )
+        )
 
-    ptx.init(ptx.Config(
-        service_name="pytracingx-demo",
-        resource_attributes={"deployment.environment": "demo"},
-        console_output=True,
-        console_level="info",
-        sinks=sinks or None,
-    ))
+    ptx.init(
+        ptx.Config(
+            service_name="pytracingx-demo",
+            resource_attributes={"deployment.environment": "demo"},
+            console_output=True,
+            sinks=sinks or None,
+        )
+    )
 
     # --- Setup instruments ---
     meter = ptx.get_meter("demo")
@@ -84,9 +101,7 @@ async def main() -> None:
 
 async def simulate_gateway(request_id: int) -> dict[str, str]:
     """Pretend to be an upstream gateway that starts a trace."""
-    with ptx.start_span(
-        "gateway-forward", kind="client", attributes={"request_id": request_id}
-    ):
+    with ptx.start_span("gateway-forward", kind="client", attributes={"request_id": request_id}):
         outgoing: dict[str, str] = {}
         ptx.inject_headers(outgoing)
         return outgoing
@@ -117,15 +132,11 @@ async def handle_request(
                 await asyncio.sleep(0.01)
 
             # DB call (client)
-            with ptx.start_span(
-                "INSERT orders", kind="client", attributes={"db.system": "mysql"}
-            ):
+            with ptx.start_span("INSERT orders", kind="client", attributes={"db.system": "mysql"}):
                 await asyncio.sleep(0.03)
 
             # Cache (client) + inject headers for a hypothetical downstream
-            with ptx.start_span(
-                "redis SET", kind="client", attributes={"db.system": "redis"}
-            ):
+            with ptx.start_span("redis SET", kind="client", attributes={"db.system": "redis"}):
                 await asyncio.sleep(0.01)
                 downstream: dict[str, str] = {}
                 ptx.inject_headers(downstream)

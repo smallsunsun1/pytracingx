@@ -37,12 +37,6 @@ fn force_flush(py: Python<'_>) -> PyResult<()> {
     Ok(())
 }
 
-/// Returns true once `init()` has been successfully called.
-#[pyfunction]
-fn is_initialized() -> bool {
-    runtime::is_initialized()
-}
-
 /// Returns the current trace_id and span_id (hex) from the active contextvars.
 #[pyfunction]
 fn current_trace_context<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -55,6 +49,8 @@ fn current_trace_context<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
 
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    runtime::init_default();
+
     // configuration
     m.add_class::<config::PyConfig>()?;
     m.add_class::<config::PyTraceSink>()?;
@@ -89,7 +85,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(init, m)?)?;
     m.add_function(wrap_pyfunction!(shutdown, m)?)?;
     m.add_function(wrap_pyfunction!(force_flush, m)?)?;
-    m.add_function(wrap_pyfunction!(is_initialized, m)?)?;
     m.add_function(wrap_pyfunction!(current_trace_context, m)?)?;
 
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

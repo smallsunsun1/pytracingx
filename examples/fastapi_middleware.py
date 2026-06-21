@@ -29,9 +29,6 @@ import pytracingx as ptx
 
 
 def _init_tracing() -> None:
-    if ptx.is_initialized():
-        return
-
     sinks = []
     if traces_endpoint := os.environ.get("OTLP_TRACES_ENDPOINT"):
         sinks.append(
@@ -56,8 +53,7 @@ def _init_tracing() -> None:
             service_name=os.environ.get("SERVICE_NAME", "fastapi-demo"),
             resource_attributes={"deployment.environment": "demo"},
             sinks=sinks,
-            console_output=not sinks,  # If no remote sink, fall back to stderr
-            console_level="info",
+            console_output=not sinks,
         )
     )
 
